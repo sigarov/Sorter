@@ -1,0 +1,55 @@
+[project]
+name = "medien-sortierer"
+version = "1.0.0"
+description = "Sortiert und entdoppelt Bilder/Videos (Tkinter-GUI)."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+# Keine harten Laufzeit-Abhaengigkeiten: die App laeuft auch ohne Pillow.
+dependencies = []
+
+[project.optional-dependencies]
+# Optional: ohne Pillow wird kein EXIF-Datum gelesen.
+exif = ["Pillow>=10.0.0"]
+dev = ["pytest>=7.0", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+# Flat-Layout: die Module liegen direkt im Projektordner. Ohne diese Liste
+# scheitert die automatische Paket-Erkennung ("Multiple top-level modules"),
+# was "pip install .[exif]" unbrauchbar machte.
+[tool.setuptools]
+py-modules = [
+    "config",
+    "dedup_sorter",
+    "gui",
+    "help_texts",
+    "main",
+    "sorter",
+    "translations",
+    "utils",
+    "worker_base",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+# Zeilenlaenge wird von Ruff nicht begrenzt (E501 aus), der Rest schon.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests duerfen laengere Zeilen haben.
+"tests/*" = ["E501"]
+
+[tool.ruff.format]
+# Zeilenenden der jeweiligen Datei beibehalten (CRLF auf Windows).
+line-ending = "auto"

@@ -1,69 +1,58 @@
-"""DedupSorter-Thread: entfernt/verschiebt _1, _2-Duplikate in den Quellordnern."""
+"""DedupSorter-Thread: entfernt/verschiebt _1, _2-Duplikate im Zielordner."""
 
 import os
 import re
 import shutil
-import threading
 from datetime import datetime
-from pathlib import Path
 
-from config import BILD_EXT, VIDEO_EXT, SKIP_NAMES
-from utils import _NullWriter, dry_log_pfad, hash_datei
+from config import DUPES_FOLDER
+from utils import dry_log_pfad, hash_datei
+from worker_base import MediaWorker
 
 
-class DedupSorter(threading.Thread):
-    """Entfernt NAME_1.jpg, NAME_2.jpg, ... in den Quellordnern.
+class DedupSorter(MediaWorker):
+    """Verschiebt NAME_1.jpg, NAME_2.jpg, ... im Zielordner nach Duplicates.
 
-       Standard (force=False): nur behandeln, wenn byte-identisch zu NAME.jpg.
-       force=True          : ALLE _1, _2, ... behandeln, egal ob der Inhalt
-                             abweicht.
-       Fehlt NAME.jpg, wird NAME_1.jpg in NAME.jpg umbenannt.
-       move_to_dupes=True  : Duplikate werden nach <Quelle>/_Duplikate/<rel>
-                             verschoben (statt geloescht). Der Keeper wird
-                             einmal pro Gruppe mit hineinkopiert."""
+    Der Lauft arbeitet ausschliesslich im **Zielordner** des Sortierlaufs –
+    dort entstehen die _1, _2-Dateien bei Namensgleichheit.
+
+    Standard (force=False): nur behandeln, wenn byte-identisch zu NAME.jpg.
+    force=True          : ALLE _1, _2, ... behandeln, egal ob der Inhalt
+                          abweicht.
+    Fehlt NAME.jpg, wird NAME_1.jpg in NAME.jpg umbenannt.
+    Fehlt die Basisdatei, wird auch eine einzelne _1-Datei in den
+    Basisnamen umbenannt und bleibt im Zielordner.
+    Es wird nichts geloescht: die Duplikate landen in <Ziel>/Duplicates/<rel>
+    und koennen dort spaeter manuell geprueft werden. Der Keeper wird einmal
+    pro Gruppe mit hineinkopiert, damit sich die Dateien vergleichen lassen."""
 
     SUFFIX_RE = re.compile(r"^(?P<base>.+)_(?P<num>\d{1,2})$")
-    DUPES_FOLDER = "_Duplikate"
 
-    def __init__(self, quelle1, quelle2, ordner1, ordner2,
-                 trockenlauf, force, move_to_dupes,
-                 lang, log_queue, stop_event):
-        super().__init__(daemon=True)
-        self.laufwerke = [
-            (quelle1, [o.strip().lower() for o in ordner1 if o.strip()]),
-            (quelle2, [o.strip().lower() for o in ordner2 if o.strip()]),
-        ]
+    def __init__(self, ziel, trockenlauf, force, lang, log_queue, stop_event):
+        # Ein einziger Wurzelordner (das Ziel), keine Ordnerfilter.
+        super().__init__(ziel, "", [], [], lang, log_queue, stop_event)
+        self.ziel = os.path.abspath(ziel)
         self.trockenlauf = trockenlauf
         self.force = force
-        self.move_to_dupes = move_to_dupes
-        self.lang = lang
-        self.log = log_queue
-        self.stop = stop_event
-        self.stat = {"geloescht": 0, "verschoben": 0, "keeper_kopiert": 0,
-                     "behalten": 0, "unterschiedlich": 0,
-                     "fehler": 0, "gruppen": 0, "frei_bytes": 0,
-                     "umbenannt": 0, "force_geloescht": 0,
-                     "gesamt": 0}
-        self.behalten_liste = []
-        self.geloescht_liste = []
-        self.diff_liste = []
+        self.stat = {
+            "verschoben": 0,
+            "keeper_kopiert": 0,
+            "behalten": 0,
+            "unterschiedlich": 0,
+            "fehler": 0,
+            "gruppen": 0,
+            "umbenannt": 0,
+            "force_geloescht": 0,
+            "gesamt": 0,
+        }
         self.pro_ordner = {}
         self._dry_log = None
         self._dry_log_path = None
-        self.error_liste = []
         self.copied_keepers = set()
 
-    def T(self, key, **kw):
-        s = self.lang.get(key, key)
-        if kw:
-            try:
-                return s.format(**kw)
-            except Exception:
-                return s
-        return s
-
     def melde(self, text, tag="info"):
-        self.log.put((tag, text))
+        """Wie in der Basisklasse, zusaetzlich ins Trockenlauf-Log schreiben."""
+        super().melde(text, tag)
         if self._dry_log is not None:
             try:
                 self._dry_log.write(f"{text}\n")
@@ -71,36 +60,17 @@ class DedupSorter(threading.Thread):
             except Exception:
                 pass
 
-    def melde_finished(self):
-        self.log.put(("finished", None))
-
-    def melde_dedup_progress(self, cur, tot):
-        self.log.put(("sort_progress", (cur, tot)))
-
-    def sammle_dateien(self):
-        alle = []
-        for laufwerk, filter_ordner in self.laufwerke:
-            if not laufwerk or not os.path.exists(laufwerk):
-                continue
-            base = os.path.abspath(laufwerk)
-            for root, dirs, files in os.walk(base):
-                # _Duplikate-Ordner selbst ueberspringen
-                dirs[:] = [d for d in dirs if d != self.DUPES_FOLDER]
-                if filter_ordner:
-                    rel = os.path.relpath(root, base)
-                    teile = [] if rel == "." else rel.split(os.sep)
-                    drin = any(t.lower() in filter_ordner for t in teile)
-                    if not drin:
-                        if not any(d.lower() in filter_ordner for d in dirs):
-                            dirs[:] = []
-                            continue
-                for f in files:
-                    if f in SKIP_NAMES:
-                        continue
-                    ext = os.path.splitext(f)[1].lower()
-                    if ext in BILD_EXT or ext in VIDEO_EXT:
-                        alle.append(os.path.join(root, f))
-        return alle
+    def _melde_fortschritt(self, idx, total):
+        """Meldet den Fortschritt gedrosselt (alle 10 Dateien und am Ende)."""
+        self.melde_fortschritt(
+            idx,
+            total,
+            "log_dedup_progress",
+            verschoben=self.stat["verschoben"],
+            behalten=self.stat["behalten"],
+            umbenannt=self.stat["umbenannt"],
+            verschieden=self.stat["unterschiedlich"],
+        )
 
     def gruppiere(self, alle):
         gruppen = {}
@@ -119,28 +89,15 @@ class DedupSorter(threading.Thread):
             gruppen.setdefault(key, []).append((p, num))
         return gruppen
 
-    def _quelle_fuer_pfad(self, pfad):
-        """Ermittelt das laengste passende Quelllaufwerk zum Pfad."""
-        pfad_abs = os.path.abspath(pfad).lower()
-        best = None
-        best_len = -1
-        for lw, _ in self.laufwerke:
-            if not lw:
-                continue
-            lw_abs = os.path.abspath(lw).lower()
-            if pfad_abs.startswith(lw_abs) and len(lw_abs) > best_len:
-                best = lw
-                best_len = len(lw_abs)
-        return best
-
     def _dupes_dst(self, src_path):
-        """Zielpfad <Quelle>/_Duplikate/<relativer Pfad>."""
-        quelle = self._quelle_fuer_pfad(src_path)
-        if not quelle:
+        """Zielpfad <Ziel>/Duplicates/<relativer Pfad>."""
+        try:
+            rel = os.path.relpath(os.path.abspath(src_path), self.ziel)
+        except Exception:
             return None
-        base = os.path.abspath(quelle)
-        rel = os.path.relpath(src_path, base)
-        return os.path.join(base, self.DUPES_FOLDER, rel)
+        if rel.startswith(".."):
+            return None
+        return os.path.join(self.ziel, DUPES_FOLDER, rel)
 
     @staticmethod
     def _unique_path(path):
@@ -152,24 +109,27 @@ class DedupSorter(threading.Thread):
             n += 1
         return f"{base}_{n}{ext}"
 
+    @staticmethod
+    def _relevante_gruppen(gruppen):
+        """Gruppen, die bearbeitet werden.
+
+        Mehr als eine Datei bedeutet Duplikat-Kandidat. Eine einzelne Datei
+        mit Nummer (_1, _2, ...) wird ebenfalls aufgenommen, damit sie in den
+        Basisnamen umbenannt wird, wenn die Basisdatei fehlt."""
+        return {k: v for k, v in gruppen.items() if len(v) > 1 or v[0][1] > 0}
+
     def run(self):
         try:
             if self.trockenlauf:
-                basis = None
-                for lw, _ in self.laufwerke:
-                    if lw and os.path.exists(lw):
-                        basis = lw
-                        break
-                dry_path = dry_log_pfad(basis) if basis else dry_log_pfad()
+                dry_path = dry_log_pfad(self.ziel)
                 try:
                     self._dry_log = open(dry_path, "w", encoding="utf-8")
                     self._dry_log_path = dry_path
-                    self._dry_log.write(
-                        f"=== DRY RUN (Dedup) {datetime.now()} ===\n")
+                    self._dry_log.write(self.T("log_start_header", zeit=datetime.now()) + "\n")
                 except Exception:
                     self._dry_log = None
 
-            self.melde(self.T("log_dedup_start"))
+            self.melde(self.T("log_dedup_ziel", path=self.ziel))
             alle = self.sammle_dateien()
             self.stat["gesamt"] = len(alle)
             self.melde(self.T("log_found_sources", n=len(alle)))
@@ -177,14 +137,15 @@ class DedupSorter(threading.Thread):
             if self.trockenlauf:
                 self.melde(self.T("log_dryrun_mode"), "warn")
                 if self._dry_log_path is not None:
-                    self.melde(self.T("log_drylogfile",
-                                      path=str(self._dry_log_path)))
+                    self.melde(self.T("log_drylogfile", path=str(self._dry_log_path)))
 
-            if self.move_to_dupes:
-                self.melde(self.T("log_move_to_dupes_enabled"), "info")
+            self.melde(self.T("log_move_to_dupes_enabled"), "info")
 
             gruppen = self.gruppiere(alle)
-            relevante = {k: v for k, v in gruppen.items() if len(v) > 1}
+            # Gruppen mit mehr als einer Datei sind Duplikat-Kandidaten.
+            # Zusaetzlich wird eine einzelne Datei mit Nummer (_1, _2, ...)
+            # umbenannt, wenn die Basisdatei fehlt.
+            relevante = self._relevante_gruppen(gruppen)
             self.stat["gruppen"] = len(relevante)
             self.melde(self.T("log_dedup_groups", n=len(relevante)))
 
@@ -192,7 +153,7 @@ class DedupSorter(threading.Thread):
             total_pruef = sum(len(v) for v in relevante.values())
 
             idx = 0
-            for key, eintraege in relevante.items():
+            for eintraege in relevante.values():
                 if self.stop.is_set():
                     self.melde(self.T("log_cancelled"), "warn")
                     break
@@ -214,14 +175,18 @@ class DedupSorter(threading.Thread):
                                 if not self.trockenlauf:
                                     os.rename(first_path, base_path)
                                     self.stat["umbenannt"] += 1
-                                    self.melde(self.T("log_dedup_rename",
-                                                      old=first_path,
-                                                      new=base_path), "info")
+                                    self.melde(
+                                        self.T("log_dedup_rename", old=first_path, new=base_path),
+                                        "info",
+                                    )
                                 else:
                                     self.stat["umbenannt"] += 1
-                                    self.melde(self.T("log_dedup_rename_dry",
-                                                      old=first_path,
-                                                      new=base_path), "info")
+                                    self.melde(
+                                        self.T(
+                                            "log_dedup_rename_dry", old=first_path, new=base_path
+                                        ),
+                                        "info",
+                                    )
                                 keep_path = base_path
                             except Exception as e:
                                 self.melde(self.T("log_error_generic", e=e), "error")
@@ -235,14 +200,13 @@ class DedupSorter(threading.Thread):
                     self.stat["fehler"] += 1
                     self.error_liste.append((hash_source, "unreadable"))
                     idx += 1
-                    self.melde_dedup_progress(idx, total_pruef)
+                    self.melde_progress(idx, total_pruef)
                     continue
 
                 self.stat["behalten"] += 1
-                self.behalten_liste.append(keep_path)
                 self.melde(self.T("log_dedup_keep", path=keep_path), "info")
 
-                for p, num in eintraege[1:]:
+                for p, _num in eintraege[1:]:
                     if self.stop.is_set():
                         break
                     idx += 1
@@ -266,22 +230,13 @@ class DedupSorter(threading.Thread):
                                 self.pro_ordner[ordner] = self.pro_ordner.get(ordner, 0) + 1
                             else:
                                 self.stat["unterschiedlich"] += 1
-                                self.diff_liste.append(p)
                                 self.melde(self.T("report_dedup_diff", path=p), "info")
                     except Exception as e:
                         self.stat["fehler"] += 1
                         self.error_liste.append((p, str(e)))
                         self.melde(self.T("log_error_generic", e=e), "error")
 
-                    if idx % 10 == 0 or idx == total_pruef:
-                        self.melde(
-                            f"[{idx}/{total_pruef}]  gelöscht={self.stat['geloescht']}  "
-                            f"verschoben={self.stat['verschoben']}  "
-                            f"behalten={self.stat['behalten']}  "
-                            f"umbenannt={self.stat['umbenannt']}  "
-                            f"verschieden={self.stat['unterschiedlich']}",
-                            "progress")
-                        self.melde_dedup_progress(idx, total_pruef)
+                    self._melde_fortschritt(idx, total_pruef)
 
             self._report()
 
@@ -297,108 +252,77 @@ class DedupSorter(threading.Thread):
             self.melde_finished()
 
     def _handle_duplicate(self, p, keep_path, force):
-        if self.move_to_dupes:
-            dst = self._dupes_dst(p)
-            if dst is None:
-                self._do_delete(p, force=force)
-                return
-            dst = self._unique_path(dst)
-            if not self.trockenlauf:
-                try:
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    shutil.move(p, dst)
-                    self.stat["verschoben"] += 1
-                    self.geloescht_liste.append(p)
-                    if force:
-                        self.stat["force_geloescht"] += 1
-                    self.melde(self.T("log_dedup_move", src=p, dst=dst), "warn")
-                except Exception as e:
-                    self.stat["fehler"] += 1
-                    self.error_liste.append((p, str(e)))
-                    self.melde(self.T("log_error_generic", e=e), "error")
-                    return
-            else:
+        dst = self._dupes_dst(p)
+        if dst is None:
+            self.stat["fehler"] += 1
+            self.error_liste.append((p, "no source drive"))
+            self.melde(self.T("log_error_generic", e="no source drive"), "error")
+            return
+        dst = self._unique_path(dst)
+        if not self.trockenlauf:
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.move(p, dst)
                 self.stat["verschoben"] += 1
-                self.geloescht_liste.append(p)
                 if force:
                     self.stat["force_geloescht"] += 1
-                self.melde(self.T("log_dedup_move_dry", src=p, dst=dst), "warn")
-
-            keeper_dst = self._dupes_dst(keep_path)
-            if keeper_dst and keep_path not in self.copied_keepers:
-                keeper_dst = self._unique_path(keeper_dst)
-                if not self.trockenlauf:
-                    try:
-                        if not os.path.exists(keeper_dst):
-                            os.makedirs(os.path.dirname(keeper_dst), exist_ok=True)
-                            shutil.copy2(keep_path, keeper_dst)
-                            self.stat["keeper_kopiert"] += 1
-                            self.melde(self.T("log_dedup_copy_keeper",
-                                              src=keep_path,
-                                              dst=keeper_dst), "info")
-                    except Exception as e:
-                        self.stat["fehler"] += 1
-                        self.error_liste.append((keep_path, str(e)))
-                        self.melde(self.T("log_error_generic", e=e), "error")
-                else:
-                    self.stat["keeper_kopiert"] += 1
-                    self.melde(self.T("log_dedup_copy_keeper_dry",
-                                      src=keep_path,
-                                      dst=keeper_dst), "info")
-                self.copied_keepers.add(keep_path)
+                self.melde(self.T("log_dedup_move", src=p, dst=dst), "warn")
+            except Exception as e:
+                self.stat["fehler"] += 1
+                self.error_liste.append((p, str(e)))
+                self.melde(self.T("log_error_generic", e=e), "error")
+                return
         else:
-            self._do_delete(p, force=force)
-
-    def _do_delete(self, p, force):
-        if not self.trockenlauf:
-            size = os.path.getsize(p)
-            os.remove(p)
-            self.stat["frei_bytes"] += size
-            self.stat["geloescht"] += 1
+            self.stat["verschoben"] += 1
             if force:
                 self.stat["force_geloescht"] += 1
-            self.geloescht_liste.append(p)
-            self.melde(self.T("log_dedup_delete", path=p), "warn")
-        else:
-            self.stat["geloescht"] += 1
-            if force:
-                self.stat["force_geloescht"] += 1
-            self.geloescht_liste.append(p)
-            self.melde(self.T("log_dedup_dryrun", path=p), "warn")
+            self.melde(self.T("log_dedup_move_dry", src=p, dst=dst), "warn")
+
+        keeper_dst = self._dupes_dst(keep_path)
+        if keeper_dst and keep_path not in self.copied_keepers:
+            keeper_dst = self._unique_path(keeper_dst)
+            if not self.trockenlauf:
+                try:
+                    if not os.path.exists(keeper_dst):
+                        os.makedirs(os.path.dirname(keeper_dst), exist_ok=True)
+                        shutil.copy2(keep_path, keeper_dst)
+                        self.stat["keeper_kopiert"] += 1
+                        self.melde(
+                            self.T("log_dedup_copy_keeper", src=keep_path, dst=keeper_dst), "info"
+                        )
+                except Exception as e:
+                    self.stat["fehler"] += 1
+                    self.error_liste.append((keep_path, str(e)))
+                    self.melde(self.T("log_error_generic", e=e), "error")
+            else:
+                self.stat["keeper_kopiert"] += 1
+                self.melde(
+                    self.T("log_dedup_copy_keeper_dry", src=keep_path, dst=keeper_dst), "info"
+                )
+            self.copied_keepers.add(keep_path)
 
     def _report(self):
         self.melde("")
         self.melde("=" * 60, "report")
         self.melde(self.T("report_title"), "report")
         self.melde("=" * 60, "report")
-        self.melde(self.T("report_dedup_deleted", n=self.stat["geloescht"]), "report")
-        if self.move_to_dupes:
-            self.melde(self.T("report_dedup_moved",
-                              n=self.stat["verschoben"]), "report")
-            self.melde(self.T("report_dedup_keeper_copies",
-                              n=self.stat["keeper_kopiert"]), "report")
-        self.melde(self.T("report_dedup_kept",    n=self.stat["behalten"]), "report")
-        _total     = self.stat.get("gesamt", 0)
-        _removed   = self.stat["verschoben"] + self.stat["geloescht"]
+        self.melde(self.T("report_dedup_moved", n=self.stat["verschoben"]), "report")
+        self.melde(self.T("report_dedup_keeper_copies", n=self.stat["keeper_kopiert"]), "report")
+        self.melde(self.T("report_dedup_kept", n=self.stat["behalten"]), "report")
+        _total = self.stat.get("gesamt", 0)
+        _removed = self.stat["verschoben"]
         _remaining = _total - _removed
         if _remaining < 0:
             _remaining = 0
-        self.melde(self.T("report_dedup_remaining",
-                          n=_remaining, total=_total), "report")
+        self.melde(self.T("report_dedup_remaining", n=_remaining, total=_total), "report")
         self.melde(self.T("report_dedup_renamed", n=self.stat["umbenannt"]), "report")
-        _copy  = self.stat["behalten"]
-        _dedup = self.stat["verschoben"] + self.stat["geloescht"]
-        self.melde(self.T("report_dedup_summary",
-                          copy=_copy, dedup=_dedup), "report")
+        _copy = self.stat["behalten"]
+        _dedup = self.stat["verschoben"]
+        self.melde(self.T("report_dedup_summary", copy=_copy, dedup=_dedup), "report")
         if self.force:
-            if self.move_to_dupes:
-                self.melde(self.T("report_dedup_forced_moved",
-                                  n=self.stat["force_geloescht"]), "report")
-            else:
-                self.melde(self.T("report_dedup_forced",
-                                  n=self.stat["force_geloescht"]), "report")
-        self.melde(self.T("report_dedup_space",
-                          mb=self.stat["frei_bytes"] / (1024 * 1024)), "report")
+            self.melde(
+                self.T("report_dedup_forced_moved", n=self.stat["force_geloescht"]), "report"
+            )
         self.melde(self.T("report_errors", n=self.stat["fehler"]), "report")
 
         if self.error_liste:
@@ -410,13 +334,11 @@ class DedupSorter(threading.Thread):
         if self.pro_ordner:
             self.melde("")
             self.melde(self.T("report_dup_per_folder"), "report")
-            for ordner, anzahl in sorted(self.pro_ordner.items(),
-                                         key=lambda x: -x[1]):
+            for ordner, anzahl in sorted(self.pro_ordner.items(), key=lambda x: -x[1]):
                 self.melde(f"  {anzahl:5d} x  {ordner}", "report")
 
         if self.trockenlauf and self._dry_log_path is not None:
             self.melde("", "report")
-            self.melde(self.T("log_drylogfile",
-                              path=str(self._dry_log_path)), "report")
+            self.melde(self.T("log_drylogfile", path=str(self._dry_log_path)), "report")
 
         self.melde(self.T("log_finished"), "report")

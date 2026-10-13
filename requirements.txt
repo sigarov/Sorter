@@ -1,0 +1,5 @@
+# Keine erforderlichen Laufzeit-Abhaengigkeiten: die App laeuft mit der
+# Standardbibliothek. Diese Datei bleibt bewusst leer.
+#
+# Optional (EXIF-Aufnahmedaten):  pip install Pillow
+# Fuer Entwicklung/CI:            pip install -r requirements-dev.txt

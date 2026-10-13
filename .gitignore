@@ -1,4 +1,4 @@
-*# --- Virtuelle Umgebungen ---
+# --- Virtuelle Umgebungen ---
 .venv/
 venv/
 env/

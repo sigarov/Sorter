@@ -1,28 +1,65 @@
 """GUI (App) fuer den Sortierer."""
 
+import logging
 import os
 import queue
+import re
 import threading
-from datetime import datetime
-
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from collections import deque
+from datetime import datetime
+from tkinter import filedialog, messagebox, ttk
 
-from config import (WINDOW_TITLE, NAMING_OPTIONS, GRAN_OPTIONS, STRUCT_OPTIONS,
-                     SORT_UNTERORDNER)
-from translations import TRANSLATIONS
-from sorter import Sorter
+from config import (
+    BILD_EXT,
+    FOLDER_NO_DATE,
+    GRAN_OPTIONS,
+    NAMING_OPTIONS,
+    SORT_UNTERORDNER,
+    STRUCT_OPTIONS,
+    VIDEO_EXT,
+    WINDOW_TITLE,
+    app_dir,
+    ist_dupes_ordner,
+)
 from dedup_sorter import DedupSorter
 from help_texts import get_help
+from sorter import Sorter
+from translations import TRANSLATIONS
+from utils import lesbare_groesse
 
+log = logging.getLogger(__name__)
 
 LANG_CODES = ["en", "de", "ru", "fr", "es", "pl", "tr"]
 
+# Obergrenze fuer Log-Zeilen (im Puffer und im Text-Widget), damit sehr
+# lange Laeufe den Speicher nicht unbegrenzt fuellen.
+MAX_LOG_ZEILEN = 50000
+
+
+def _enable_dpi_awareness():
+    """Aktiviert DPI-Bewusstsein unter Windows (scharfe Schrift auf HiDPI)."""
+    if os.name != "nt":
+        return
+    try:
+        from ctypes import windll
+    except Exception:
+        return
+    try:
+        windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 class App(tk.Tk):
     def __init__(self):
+        _enable_dpi_awareness()
         super().__init__()
         self.modus_var = tk.StringVar(value="sort")
-        self._log_lines = []
+        self._log_lines = deque(maxlen=MAX_LOG_ZEILEN)
         self._log_only_errors = tk.BooleanVar(value=False)
         self._log_autoscroll = tk.BooleanVar(value=True)
         self._log_search = tk.StringVar()
@@ -47,7 +84,6 @@ class App(tk.Tk):
         self.skip_existing = tk.BooleanVar(value=False)
         self.dedup = tk.BooleanVar(value=False)
         self.dedup_force = tk.BooleanVar(value=False)
-        self.dedup_action = tk.StringVar(value="move")
         self.gemeinsam = tk.BooleanVar(value=False)
         self.naming_label = tk.StringVar()
         self.gran_label = tk.StringVar()
@@ -75,9 +111,13 @@ class App(tk.Tk):
         fr_lang.pack(fill="x", pady=(0, 6))
         self._text_widgets["lbl_lang"] = tk.Label(fr_lang, text="", font=("", 10, "bold"))
         self._text_widgets["lbl_lang"].pack(side="left")
-        self.cmb_lang = ttk.Combobox(fr_lang, textvariable=self.lang_display,
-                                     values=[TRANSLATIONS[c]["name"] for c in LANG_CODES],
-                                     state="readonly", width=15)
+        self.cmb_lang = ttk.Combobox(
+            fr_lang,
+            textvariable=self.lang_display,
+            values=[TRANSLATIONS[c]["name"] for c in LANG_CODES],
+            state="readonly",
+            width=15,
+        )
         self.cmb_lang.pack(side="left", padx=6)
         self.cmb_lang.bind("<<ComboboxSelected>>", self._on_lang_change)
 
@@ -96,13 +136,16 @@ class App(tk.Tk):
         left1.pack(fill="x")
         self._text_widgets["lbl_source1"] = tk.Label(left1, text="", font=("", 10, "bold"))
         self._text_widgets["lbl_source1"].pack(anchor="w")
-        fr1 = tk.Frame(left1); fr1.pack(fill="x", pady=(0, 3))
-        tk.Entry(fr1, textvariable=self.q1).pack(side="left", fill="x", expand=True)
-        self.btn_w1 = tk.Button(fr1, text="", command=lambda: self.waehle(self.q1, "source1"))
+        fr1 = tk.Frame(left1)
+        fr1.pack(fill="x", pady=(0, 3))
+        self.q1_entry = tk.Entry(fr1, textvariable=self.q1)
+        self.q1_entry.pack(side="left", fill="x", expand=True)
+        self.btn_w1 = tk.Button(fr1, text="", command=lambda: self.waehle(self.q1))
         self.btn_w1.pack(side="left", padx=(4, 0))
         self._text_widgets["lbl_filter1"] = tk.Label(left1, text="", fg="#444")
         self._text_widgets["lbl_filter1"].pack(anchor="w")
-        tk.Entry(left1, textvariable=self.filter1).pack(fill="x", pady=(0, 1))
+        self.filter1_entry = tk.Entry(left1, textvariable=self.filter1)
+        self.filter1_entry.pack(fill="x", pady=(0, 1))
         self._text_widgets["lbl_filter_hint1"] = tk.Label(left1, text="", fg="#888", font=("", 8))
         self._text_widgets["lbl_filter_hint1"].pack(anchor="w")
 
@@ -111,13 +154,16 @@ class App(tk.Tk):
         left2.pack(fill="x", pady=(10, 0))
         self._text_widgets["lbl_source2"] = tk.Label(left2, text="", font=("", 10, "bold"))
         self._text_widgets["lbl_source2"].pack(anchor="w")
-        fr2 = tk.Frame(left2); fr2.pack(fill="x", pady=(0, 3))
-        tk.Entry(fr2, textvariable=self.q2).pack(side="left", fill="x", expand=True)
-        self.btn_w2 = tk.Button(fr2, text="", command=lambda: self.waehle(self.q2, "source2"))
+        fr2 = tk.Frame(left2)
+        fr2.pack(fill="x", pady=(0, 3))
+        self.q2_entry = tk.Entry(fr2, textvariable=self.q2)
+        self.q2_entry.pack(side="left", fill="x", expand=True)
+        self.btn_w2 = tk.Button(fr2, text="", command=lambda: self.waehle(self.q2))
         self.btn_w2.pack(side="left", padx=(4, 0))
         self._text_widgets["lbl_filter2"] = tk.Label(left2, text="", fg="#444")
         self._text_widgets["lbl_filter2"].pack(anchor="w")
-        tk.Entry(left2, textvariable=self.filter2).pack(fill="x", pady=(0, 1))
+        self.filter2_entry = tk.Entry(left2, textvariable=self.filter2)
+        self.filter2_entry.pack(fill="x", pady=(0, 1))
         self._text_widgets["lbl_filter_hint2"] = tk.Label(left2, text="", fg="#888", font=("", 8))
         self._text_widgets["lbl_filter_hint2"].pack(anchor="w")
 
@@ -126,29 +172,46 @@ class App(tk.Tk):
         left3.pack(fill="x", pady=(10, 0))
         self._text_widgets["lbl_target"] = tk.Label(left3, text="", font=("", 10, "bold"))
         self._text_widgets["lbl_target"].pack(anchor="w")
-        self.ziel_frame = tk.Frame(left3); self.ziel_frame.pack(fill="x", pady=(0, 3))
+        self.ziel_frame = tk.Frame(left3)
+        self.ziel_frame.pack(fill="x", pady=(0, 3))
         self.ziel_entry = tk.Entry(self.ziel_frame, textvariable=self.ziel)
         self.ziel_entry.pack(side="left", fill="x", expand=True)
-        self.btn_w3 = tk.Button(self.ziel_frame, text="",
-                                command=lambda: self.waehle(self.ziel, "target"))
+        self.btn_w3 = tk.Button(self.ziel_frame, text="", command=lambda: self.waehle(self.ziel))
         self.btn_w3.pack(side="left", padx=(4, 0))
+        # Ziel auch bei manueller Eingabe neu bewerten (Dedup-Freigabe).
+        self.ziel_entry.bind("<KeyRelease>", lambda _e: self._aktualisiere_dedup_freigabe())
+        self.ziel_entry.bind("<FocusOut>", lambda _e: self._aktualisiere_dedup_freigabe())
 
         # --- Start/Stop direkt unter Target (linke Spalte) ---
         btn_box = tk.Frame(left_col)
         btn_box.pack(fill="x", pady=(8, 12))
         self.btn_start = tk.Button(
-            btn_box, text="", bg="#2196F3", fg="white",
-            activebackground="#1976D2", activeforeground="white",
-            font=("", 11, "bold"), relief="raised", bd=2,
-            command=self.start)
+            btn_box,
+            text="",
+            bg="#2196F3",
+            fg="white",
+            activebackground="#1976D2",
+            activeforeground="white",
+            font=("", 11, "bold"),
+            relief="raised",
+            bd=2,
+            command=self.start,
+        )
         self.btn_start.pack(side="left", ipadx=20)
         self.btn_stop = tk.Button(
-            btn_box, text="", state="disabled",
-            bg="#F44336", fg="white",
-            activebackground="#D32F2F", activeforeground="white",
+            btn_box,
+            text="",
+            state="disabled",
+            bg="#F44336",
+            fg="white",
+            activebackground="#D32F2F",
+            activeforeground="white",
             disabledforeground="#eeeeee",
-            font=("", 11, "bold"), relief="raised", bd=2,
-            command=self.stoppen)
+            font=("", 11, "bold"),
+            relief="raised",
+            bd=2,
+            command=self.stoppen,
+        )
         self.btn_stop.pack(side="left", padx=8)
 
         # --- Target-Index & Sortierung (ganz unten links, ueber der punktierten Linie) ---
@@ -168,24 +231,21 @@ class App(tk.Tk):
         srt_box.pack(side="bottom", fill="x")
         idx_box.pack(side="bottom", fill="x", pady=(0, 6))
 
-
         # ================= RECHTE SPALTE: Optionen in Gruppen =================
         right_col = tk.Frame(fr_main)
         right_col.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
         # --- Gruppe 1: Allgemein ---
-        self.grp_general = tk.LabelFrame(right_col, text="", bd=3,
-                                         relief="ridge", padx=8, pady=4,
-                                         font=("", 9, "bold"))
+        self.grp_general = tk.LabelFrame(
+            right_col, text="", bd=3, relief="ridge", padx=8, pady=4, font=("", 9, "bold")
+        )
         self.grp_general.pack(fill="x", pady=(0, 8))
         self._help_button(self.grp_general, "general")
 
-        self.chk_dry = ttk.Checkbutton(
-            self.grp_general, variable=self.trockenlauf, text="")
+        self.chk_dry = ttk.Checkbutton(self.grp_general, variable=self.trockenlauf, text="")
         self.chk_dry.pack(anchor="w")
 
-        self.chk_skip = ttk.Checkbutton(
-            self.grp_general, variable=self.skip_existing, text="")
+        self.chk_skip = ttk.Checkbutton(self.grp_general, variable=self.skip_existing, text="")
         self.chk_skip.pack(anchor="w")
 
         # --- Tabs: modus-spezifische Optionen ---
@@ -198,87 +258,67 @@ class App(tk.Tk):
         self.nb.bind("<<NotebookTabChanged>>", self._on_tab_change)
 
         # --- Gruppe 2: Deduplizierung (Tab "Bereinigen") ---
-        self.grp_dedup = tk.LabelFrame(self.tab_dedup, text="", bd=3,
-                                       relief="ridge", padx=8, pady=4,
-                                       font=("", 9, "bold"))
+        self.grp_dedup = tk.LabelFrame(
+            self.tab_dedup, text="", bd=3, relief="ridge", padx=8, pady=4, font=("", 9, "bold")
+        )
         self.grp_dedup.pack(fill="both", expand=True, padx=2, pady=2)
         self._help_button(self.grp_dedup, "dedup")
 
-        self.chk_dedup = ttk.Checkbutton(
-            self.grp_dedup, variable=self.dedup, text="")
-
-        # Aktionsauswahl (gehoert zum Hauptschalter)
-        self._text_widgets["lbl_dedup_action"] = tk.Label(
-            self.grp_dedup, text="", font=("", 9, "bold"))
-        self._text_widgets["lbl_dedup_action"].pack(
-            anchor="w", padx=(20, 0), pady=(8, 2))
-
-        self.rb_dedup_move = ttk.Radiobutton(
-            self.grp_dedup, variable=self.dedup_action, value="move",
-            command=self._update_dedup_hint, text="")
-        self.rb_dedup_move.pack(anchor="w", padx=(40, 0))
-
-        self.rb_dedup_delete = ttk.Radiobutton(
-            self.grp_dedup, variable=self.dedup_action, value="delete",
-            command=self._update_dedup_hint, text="")
-        self.rb_dedup_delete.pack(anchor="w", padx=(40, 0))
+        self.chk_dedup = ttk.Checkbutton(self.grp_dedup, variable=self.dedup, text="")
 
         # Trennlinie zur naechsten Regel (Force)
-        ttk.Separator(self.grp_dedup, orient="horizontal").pack(
-            fill="x", pady=(8, 6))
+        ttk.Separator(self.grp_dedup, orient="horizontal").pack(fill="x", pady=(8, 6))
 
         # Force-Regel (eigene, unabhaengige Zusatzregel)
         self._text_widgets["lbl_dedup_extra"] = tk.Label(
-            self.grp_dedup, text="", font=("", 9, "bold"))
-        self._text_widgets["lbl_dedup_extra"].pack(
-            anchor="w", pady=(0, 2))
+            self.grp_dedup, text="", font=("", 9, "bold")
+        )
+        self._text_widgets["lbl_dedup_extra"].pack(anchor="w", pady=(0, 2))
 
-        self.chk_dedup_force = ttk.Checkbutton(
-            self.grp_dedup, variable=self.dedup_force, text="")
+        self.chk_dedup_force = ttk.Checkbutton(self.grp_dedup, variable=self.dedup_force, text="")
         self.chk_dedup_force.pack(anchor="w", padx=(0, 0), pady=(0, 4))
 
         self._text_widgets["lbl_dedup_hint"] = tk.Label(
-            self.grp_dedup, text="", fg="#888", font=("", 8),
-            justify="left", wraplength=350)
+            self.grp_dedup, text="", fg="#888", font=("", 8), justify="left", wraplength=350
+        )
         self._text_widgets["lbl_dedup_hint"].pack(anchor="w", pady=(2, 0))
 
         # --- Gruppe 3: Sortierung & Namen (Tab "Sortieren") ---
-        self.grp_naming = tk.LabelFrame(self.tab_sort, text="", bd=3,
-                                        relief="ridge", padx=8, pady=4,
-                                        font=("", 9, "bold"))
+        self.grp_naming = tk.LabelFrame(
+            self.tab_sort, text="", bd=3, relief="ridge", padx=8, pady=4, font=("", 9, "bold")
+        )
         self.grp_naming.pack(fill="both", expand=True, padx=2, pady=2)
         self._help_button(self.grp_naming, "naming")
 
-        self._text_widgets["lbl_naming"] = tk.Label(
-            self.grp_naming, text="", font=("", 9, "bold"))
+        self._text_widgets["lbl_naming"] = tk.Label(self.grp_naming, text="", font=("", 9, "bold"))
         self._text_widgets["lbl_naming"].pack(anchor="w", pady=(0, 2))
-        self.cmb_naming = ttk.Combobox(self.grp_naming,
-                                       textvariable=self.naming_label,
-                                       state="readonly")
+        self.cmb_naming = ttk.Combobox(
+            self.grp_naming, textvariable=self.naming_label, state="readonly"
+        )
         self.cmb_naming.pack(fill="x")
         self.cmb_naming.bind("<<ComboboxSelected>>", self._on_naming_change)
         self._text_widgets["lbl_hint"] = tk.Label(
-            self.grp_naming, text="", fg="#888", font=("", 8),
-            justify="left", wraplength=350)
+            self.grp_naming, text="", fg="#888", font=("", 8), justify="left", wraplength=350
+        )
         self._text_widgets["lbl_hint"].pack(anchor="w", pady=(2, 6))
 
         fr_struct = tk.Frame(self.grp_naming)
         fr_struct.pack(fill="x", anchor="w")
-        self._text_widgets["lbl_structure"] = tk.Label(
-            fr_struct, text="", font=("", 9, "bold"))
+        self._text_widgets["lbl_structure"] = tk.Label(fr_struct, text="", font=("", 9, "bold"))
         self._text_widgets["lbl_structure"].pack(side="left")
-        self.cmb_struct = ttk.Combobox(fr_struct, textvariable=self.struct_label,
-                                       state="readonly", width=24)
+        self.cmb_struct = ttk.Combobox(
+            fr_struct, textvariable=self.struct_label, state="readonly", width=24
+        )
         self.cmb_struct.pack(side="left", padx=6)
         self.cmb_struct.bind("<<ComboboxSelected>>", self._on_struct_change)
 
         fr_gran = tk.Frame(self.grp_naming)
         fr_gran.pack(fill="x", anchor="w", pady=(6, 0))
-        self._text_widgets["lbl_granularity"] = tk.Label(
-            fr_gran, text="", font=("", 9, "bold"))
+        self._text_widgets["lbl_granularity"] = tk.Label(fr_gran, text="", font=("", 9, "bold"))
         self._text_widgets["lbl_granularity"].pack(side="left")
-        self.cmb_gran = ttk.Combobox(fr_gran, textvariable=self.gran_label,
-                                     state="readonly", width=22)
+        self.cmb_gran = ttk.Combobox(
+            fr_gran, textvariable=self.gran_label, state="readonly", width=22
+        )
         self.cmb_gran.pack(side="left", padx=6)
         self.cmb_gran.bind("<<ComboboxSelected>>", self._on_gran_change)
 
@@ -292,6 +332,17 @@ class App(tk.Tk):
         log_head.pack(fill="x")
         self._text_widgets["lbl_log"] = tk.Label(log_head, text="", font=("", 10, "bold"))
         self._text_widgets["lbl_log"].pack(side="left")
+        tk.Button(
+            log_head,
+            text="?",
+            width=2,
+            font=("", 8, "bold"),
+            relief="flat",
+            bd=0,
+            fg="#2196F3",
+            cursor="hand2",
+            command=lambda: self._zeige_hilfe("log"),
+        ).pack(side="left", padx=(4, 0))
 
         bar = tk.Frame(log_head)
         bar.pack(side="right")
@@ -302,11 +353,10 @@ class App(tk.Tk):
         self.btn_log_open = tk.Button(bar, text="", command=self._log_open)
         self.btn_log_open.pack(side="left")
         self.chk_log_errors = ttk.Checkbutton(
-            bar, text="", variable=self._log_only_errors,
-            command=self._toggle_log_filter)
+            bar, text="", variable=self._log_only_errors, command=self._toggle_log_filter
+        )
         self.chk_log_errors.pack(side="left", padx=(8, 0))
-        self.chk_log_autoscroll = ttk.Checkbutton(
-            bar, text="", variable=self._log_autoscroll)
+        self.chk_log_autoscroll = ttk.Checkbutton(bar, text="", variable=self._log_autoscroll)
         self.chk_log_autoscroll.pack(side="left", padx=(8, 0))
 
         search_box = tk.Frame(self)
@@ -321,8 +371,15 @@ class App(tk.Tk):
         self.txt.pack(fill="both", expand=True)
 
         # ---------- Statusleiste ----------
-        status = tk.Label(self, textvariable=self.status_text, anchor="w",
-                          fg="#333", bd=1, relief="sunken", padx=6)
+        status = tk.Label(
+            self,
+            textvariable=self.status_text,
+            anchor="w",
+            fg="#333",
+            bd=1,
+            relief="sunken",
+            padx=6,
+        )
         status.pack(fill="x", pady=(4, 0))
 
         self.txt.tag_config("info", foreground="#8ecae6")
@@ -339,6 +396,8 @@ class App(tk.Tk):
 
         self._load_settings()
         self._bind_shortcuts()
+        # Dedup erst freigeben, wenn im Ziel schon sortiert wurde.
+        self._aktualisiere_dedup_freigabe()
         self._ui_ready = True
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._set_status(self.lang.get("status_ready", "Bereit"))
@@ -355,7 +414,7 @@ class App(tk.Tk):
 
     def _apply_language(self):
         L = self.lang
-        self.title(WINDOW_TITLE)
+        self.title(L.get("window_title", WINDOW_TITLE))
 
         if hasattr(self, "grp_general"):
             self.grp_general.config(text=L.get("lbl_group_general", "General"))
@@ -365,22 +424,15 @@ class App(tk.Tk):
         self._text_widgets["lbl_lang"].config(text=L["lang_label"])
         self.lang_display.set(L["name"])
 
-        if self.dedup.get():
-            self._text_widgets["lbl_source1"].config(
-                text=L.get("lbl_source1_dedup", L["lbl_source1"]))
-            self._text_widgets["lbl_source2"].config(
-                text=L.get("lbl_source2_dedup", L["lbl_source2"]))
-            self._text_widgets["lbl_target"].config(
-                text=L.get("lbl_target_dedup", L["lbl_target"]))
-        else:
-            self._text_widgets["lbl_source1"].config(text=L["lbl_source1"])
-            self._text_widgets["lbl_source2"].config(text=L["lbl_source2"])
-            self._text_widgets["lbl_target"].config(text=L["lbl_target"])
+        self._text_widgets["lbl_source1"].config(text=L["lbl_source1"])
+        self._text_widgets["lbl_source2"].config(text=L["lbl_source2"])
+        self._text_widgets["lbl_target"].config(
+            text=L.get("lbl_target_dedup", L["lbl_target"]) if self.dedup.get() else L["lbl_target"]
+        )
         self._text_widgets["lbl_filter1"].config(text=L["lbl_filter_short"])
         self._text_widgets["lbl_filter2"].config(text=L["lbl_filter_short"])
         self._text_widgets["lbl_filter_hint1"].config(text=L["lbl_filter_hint"])
         self._text_widgets["lbl_filter_hint2"].config(text=L["lbl_filter_hint"])
-        self._text_widgets["lbl_target"].config(text=L["lbl_target"])
 
         self.btn_w1.config(text=L["btn_choose"])
         self.btn_w2.config(text=L["btn_choose"])
@@ -390,19 +442,11 @@ class App(tk.Tk):
         self.chk_skip.config(text=L["chk_skip_existing"])
         self.chk_dedup.config(text=L["chk_dedup"])
         self.chk_dedup_force.config(text=L.get("chk_dedup_force", ""))
-        if hasattr(self, "lbl_dedup_action"):
-            self._text_widgets["lbl_dedup_action"].config(
-                text=L.get("lbl_dedup_action", "What should happen?"))
-        if hasattr(self, "rb_dedup_move"):
-            self.rb_dedup_move.config(
-                text=L.get("rb_dedup_move", "Move to _Duplikate"))
-            self.rb_dedup_delete.config(
-                text=L.get("rb_dedup_delete", "Delete permanently"))
         if "lbl_dedup_extra" in self._text_widgets:
             self._text_widgets["lbl_dedup_extra"].config(
-                text=L.get("lbl_dedup_extra", "Additional rule:"))
+                text=L.get("lbl_dedup_extra", "Additional rule:")
+            )
         self._update_dedup_hint()
-        self._text_widgets["lbl_dedup_hint"].config(text=L["lbl_dedup_hint"])
 
         self._text_widgets["lbl_structure"].config(text=L["lbl_structure"])
         self.cmb_struct["values"] = [L[tr_key] for _, tr_key in STRUCT_OPTIONS]
@@ -420,8 +464,7 @@ class App(tk.Tk):
                 break
 
         self._text_widgets["lbl_naming"].config(text=L["lbl_naming"])
-        self._text_widgets["lbl_hint"].config(
-            text=L["hint_text"].format(nodate=L["folder_no_date"]))
+        self._text_widgets["lbl_hint"].config(text=L["hint_text"].format(nodate=FOLDER_NO_DATE))
 
         self.btn_start.config(text=L["btn_start"])
         self.btn_stop.config(text=L["btn_stop"])
@@ -436,7 +479,7 @@ class App(tk.Tk):
 
         if hasattr(self, "nb"):
             self.nb.tab(0, text=L.get("mode_sort", "Sortieren"))
-            self.nb.tab(1, text=L.get("mode_dedup", "Bereinigen"))
+            self._setze_tab_titel(self._dedup_freigabe())
         if hasattr(self, "btn_log_clear"):
             self.btn_log_clear.config(text=L.get("btn_log_clear", "Leeren"))
             self.btn_log_save.config(text=L.get("btn_log_save", "Speichern"))
@@ -444,8 +487,7 @@ class App(tk.Tk):
             self.chk_log_errors.config(text=L.get("chk_log_errors", "Nur Fehler"))
             self.chk_log_autoscroll.config(text=L.get("chk_log_autoscroll", "Auto-Scroll"))
         if "lbl_log_search" in self._text_widgets:
-            self._text_widgets["lbl_log_search"].config(
-                text=L.get("lbl_log_search", "Suchen:"))
+            self._text_widgets["lbl_log_search"].config(text=L.get("lbl_log_search", "Suchen:"))
 
         self._refresh_progress_labels()
 
@@ -477,31 +519,38 @@ class App(tk.Tk):
     def _update_dedup_hint(self):
         if "lbl_dedup_hint" not in self._text_widgets:
             return
-        L = self.lang
-        if not self.dedup.get():
-            self._text_widgets["lbl_dedup_hint"].config(
-                text=L.get("lbl_dedup_hint", ""))
-            return
-        action = self.dedup_action.get() if hasattr(self, "dedup_action") else "move"
-        if action == "move":
-            txt = L.get("hint_dedup_move", L.get("lbl_dedup_hint", ""))
-        else:
-            txt = L.get("hint_dedup_delete", L.get("lbl_dedup_hint", ""))
-        self._text_widgets["lbl_dedup_hint"].config(text=txt)
+        self._text_widgets["lbl_dedup_hint"].config(text=self.lang.get("hint_dedup_move", ""))
 
     def _on_dedup_toggle(self):
         self.modus_var.set("dedup" if self.dedup.get() else "sort")
         self._sync_tab()
-        state = "disabled" if self.dedup.get() else "normal"
-        try:
-            self.ziel_entry.config(state=state)
-            self.btn_w3.config(state=state)
-        except tk.TclError:
-            pass
+        dedup = self.dedup.get()
 
-        # Radio-Buttons und Force-Checkbox nur bei aktivem Dedup klickbar
-        d_state = "normal" if self.dedup.get() else "disabled"
-        for wname in ("rb_dedup_move", "rb_dedup_delete", "chk_dedup_force"):
+        # Dedup laeuft im **Zielordner**: dort liegen die _1, _2-Dateien aus dem
+        # Sortierlauf. Deshalb sind im Dedup-Modus nur die Ziel-Felder aktiv und
+        # Quellen samt Filtern gesperrt.
+        quellen_state = "disabled" if dedup else "normal"
+        for w in (
+            self.q1_entry,
+            self.q2_entry,
+            self.filter1_entry,
+            self.filter2_entry,
+            self.btn_w1,
+            self.btn_w2,
+        ):
+            try:
+                w.config(state=quellen_state)
+            except tk.TclError:
+                pass
+        for w in (self.ziel_entry, self.btn_w3):
+            try:
+                w.config(state="normal")
+            except tk.TclError:
+                pass
+
+        # Force-Checkbox nur bei aktivem Dedup klickbar
+        d_state = "normal" if dedup else "disabled"
+        for wname in ("chk_dedup_force",):
             w = getattr(self, wname, None)
             if w is not None:
                 try:
@@ -511,32 +560,35 @@ class App(tk.Tk):
         self._update_dedup_hint()
 
         L = self.lang
-        if self.dedup.get():
-            self._text_widgets["lbl_source1"].config(
-                text=L.get("lbl_source1_dedup", L["lbl_source1"]))
-            self._text_widgets["lbl_source2"].config(
-                text=L.get("lbl_source2_dedup", L["lbl_source2"]))
-            self._text_widgets["lbl_target"].config(
-                text=L.get("lbl_target_dedup", L["lbl_target"]))
-        else:
-            self._text_widgets["lbl_source1"].config(text=L["lbl_source1"])
-            self._text_widgets["lbl_source2"].config(text=L["lbl_source2"])
-            self._text_widgets["lbl_target"].config(text=L["lbl_target"])
+        self._text_widgets["lbl_source1"].config(text=L["lbl_source1"])
+        self._text_widgets["lbl_source2"].config(text=L["lbl_source2"])
+        self._text_widgets["lbl_target"].config(
+            text=L.get("lbl_target_dedup", L["lbl_target"]) if dedup else L["lbl_target"]
+        )
 
     # ---------- Hilfe (?-Buttons) ----------
     def _help_button(self, parent, section):
         """Kleiner ?-Button, der den Hilfetext zum Abschnitt anzeigt."""
-        btn = tk.Button(parent, text="?", width=2, font=("", 8, "bold"),
-                        relief="flat", bd=0, fg="#2196F3", cursor="hand2",
-                        command=lambda s=section: self._zeige_hilfe(s))
+        btn = tk.Button(
+            parent,
+            text="?",
+            width=2,
+            font=("", 8, "bold"),
+            relief="flat",
+            bd=0,
+            fg="#2196F3",
+            cursor="hand2",
+            command=lambda s=section: self._zeige_hilfe(s),
+        )
         btn.pack(anchor="e")
         return btn
 
     def _zeige_hilfe(self, section):
         text = get_help(self.lang_code, section)
         if not text:
-            text = self.lang.get("lbl_dedup_hint", "")
-        messagebox.showinfo(self.lang.get("lbl_group_" + section, "Hilfe"), text)
+            text = self.lang.get("hint_dedup_first_run", "")
+        titel = self.lang.get("lbl_group_" + section) or self.lang.get("dlg_help_title", "Hilfe")
+        messagebox.showinfo(titel, text)
 
     # ---------- Modus / Tabs ----------
     def _on_mode_change(self):
@@ -552,7 +604,21 @@ class App(tk.Tk):
             idx = self.nb.index(self.nb.select())
         except Exception:
             return
-        new_dedup = (idx == 1)
+        new_dedup = idx == 1
+        if new_dedup and not self._dedup_freigabe():
+            # Noch nicht sortiert: zurueck zum Sortieren und erklaeren, warum.
+            self._syncing_mode = True
+            try:
+                self.nb.select(0)
+            finally:
+                self._syncing_mode = False
+            self._setze_tab_titel(False)
+            L = self.lang
+            messagebox.showinfo(
+                L.get("lbl_group_dedup", "Duplikate"),
+                L.get("hint_dedup_locked", ""),
+            )
+            return
         if self.dedup.get() != new_dedup:
             self.dedup.set(new_dedup)
             self._on_dedup_toggle()
@@ -560,7 +626,7 @@ class App(tk.Tk):
     def _sync_tab(self):
         if getattr(self, "_syncing_mode", False):
             return
-        nb = getattr(self, "nb", None)
+        nb = self.__dict__.get("nb")
         if nb is None:
             return
         want = 1 if self.dedup.get() else 0
@@ -578,8 +644,17 @@ class App(tk.Tk):
         if self._log_only_errors.get() and tag not in ("error", "warn", "report"):
             return
         self.txt.insert("end", text + "\n", tag)
+        self._trim_log_text()
         if self._log_autoscroll.get():
             self.txt.see("end")
+
+    def _trim_log_text(self):
+        """Kuerzt das Text-Widget, damit lange Laeufe keinen Speicher fressen."""
+        try:
+            if int(self.txt.index("end-1c").split(".")[0]) > MAX_LOG_ZEILEN:
+                self.txt.delete("1.0", f"{MAX_LOG_ZEILEN // 4}.0")
+        except Exception:
+            log.debug("Log-Text konnte nicht gekuerzt werden", exc_info=True)
 
     def _render_log(self):
         self.txt.delete("1.0", "end")
@@ -595,16 +670,16 @@ class App(tk.Tk):
         self._render_log()
 
     def _log_clear(self):
-        self._log_lines = []
+        self._log_lines.clear()
         try:
             self.txt.delete("1.0", "end")
         except Exception:
-            pass
+            log.debug("Log-Text konnte nicht geleert werden", exc_info=True)
 
     def _log_save(self):
         p = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            filetypes=[("Text", "*.txt"), ("Alle", "*.*")])
+            defaultextension=".txt", filetypes=[("Text", "*.txt"), ("Alle", "*.*")]
+        )
         if not p:
             return
         try:
@@ -616,8 +691,7 @@ class App(tk.Tk):
             messagebox.showerror(self.lang.get("msg_missing_title", "Fehler"), str(e))
 
     def _log_open(self):
-        p = filedialog.askopenfilename(
-            filetypes=[("Text", "*.txt"), ("Alle", "*.*")])
+        p = filedialog.askopenfilename(filetypes=[("Text", "*.txt"), ("Alle", "*.*")])
         if not p:
             return
         try:
@@ -650,37 +724,52 @@ class App(tk.Tk):
 
     def _confirm_preview(self, f1, f2):
         quellen = [q for q in (self.q1.get(), self.q2.get()) if q]
+        exts = BILD_EXT | VIDEO_EXT
+        # Das *effektive* Ziel ueberspringen (bei Quelle = Ziel ist das der
+        # Unterordner 'Sorted'). Nur das rohe Ziel zu ueberspringen waere
+        # falsch: dann wuerde bei Quelle = Ziel gar nichts gezaehlt.
+        ziel_norm = None
         try:
-            from config import BILD_EXT, VIDEO_EXT
-            exts = BILD_EXT | VIDEO_EXT
+            ziel_norm = os.path.normcase(os.path.abspath(self._effektives_ziel()[0]))
         except Exception:
-            exts = None
+            ziel_norm = None
         n = 0
         size = 0
         limit = 20000
         for q in quellen:
-            for root, _dirs, files in os.walk(q):
+            for root, dirs, files in os.walk(q):
+                # Duplikat-Ordner und den (effektiven) Zielordner nicht mitzaehlen
+                dirs[:] = [d for d in dirs if not ist_dupes_ordner(d)]
+                if ziel_norm and os.path.normcase(os.path.abspath(root)) == ziel_norm:
+                    dirs[:] = []
+                    continue
                 for fn in files:
-                    if exts is not None and os.path.splitext(fn)[1].lower() not in exts:
+                    if os.path.splitext(fn)[1].lower() not in exts:
                         continue
                     n += 1
                     try:
                         size += os.path.getsize(os.path.join(root, fn))
                     except Exception:
-                        pass
+                        log.debug(
+                            "Groesse fuer %s nicht ermittelbar",
+                            os.path.join(root, fn),
+                            exc_info=True,
+                        )
                     if n >= limit:
                         break
                 if n >= limit:
                     break
         if n == 0:
             return True
-        mb = size / (1024.0 * 1024.0)
-        size_s = "%.2f GB" % (mb / 1024.0) if mb >= 1024 else "%.1f MB" % mb
+        size_s = lesbare_groesse(size)
         n_s = ">%d" % limit if n >= limit else str(n)
         L = self.lang
         tmpl = L.get("preview_msg", "{n} Dateien gefunden ({size}).\n\nJetzt starten?")
-        msg = tmpl.format(n=n_s, size=size_s, src=self.q1.get() or "-",
-                          dst=self.ziel.get() or "-")
+        # Alle gewaehlten Quellen und das tatsaechliche Ziel anzeigen
+        # (bei Quelle = Ziel ist das der Unterordner 'Sorted').
+        quelle_text = "; ".join(quellen) or "-"
+        ziel_text = self._effektives_ziel()[0] or "-"
+        msg = tmpl.format(n=n_s, size=size_s, src=quelle_text, dst=ziel_text)
         return messagebox.askokcancel(L.get("preview_title", "Vorschau"), msg)
 
     def _show_finish_dialog(self):
@@ -688,13 +777,20 @@ class App(tk.Tk):
             sorter = getattr(self, "sorter", None)
             stat = getattr(sorter, "stat", None) or {}
             L = self.lang
-            txt = "\n".join("%s: %s" % (k, v) for k, v in stat.items())
+            # Uebersetzte Report-Zeilen aus dem Log bevorzugen; gibt es keine
+            # (z. B. Abbruch), werden Fehler/Warnungen gezeigt. Die rohen
+            # stat-Schluessel sind nur der letzte Notnagel.
+            zeilen = [t for tag, t in self._log_lines if tag == "report" and t.strip()]
+            if not zeilen:
+                zeilen = [t for tag, t in self._log_lines if tag in ("error", "warn") and t.strip()]
+            if not zeilen:
+                zeilen = ["%s: %s" % (k, v) for k, v in stat.items()]
+            txt = "\n".join(zeilen)
             dlg = tk.Toplevel(self)
             dlg.title(L.get("dlg_finish_title", "Fertig"))
             dlg.transient(self)
-            h = max(4, min(16, len(stat) + 1))
-            t = tk.Text(dlg, height=h, width=44, bg="#111", fg="#eee",
-                        font=("Consolas", 9))
+            h = max(4, min(20, len(zeilen) + 1))
+            t = tk.Text(dlg, height=h, width=44, bg="#111", fg="#eee", font=("Consolas", 9))
             t.pack(fill="both", expand=True, padx=10, pady=(10, 6))
             t.insert("1.0", txt)
             t.config(state="disabled")
@@ -716,24 +812,36 @@ class App(tk.Tk):
                 z = getattr(sorter, "ziel", None)
                 self._open_path(str(z) if z else os.getcwd())
 
-            tk.Button(box, text=L.get("btn_open_log", "Log oeffnen"),
-                      command=open_log).pack(side="left")
-            tk.Button(box, text=L.get("btn_open_folder", "Ordner oeffnen"),
-                      command=open_folder).pack(side="left", padx=6)
-            tk.Button(box, text=L.get("btn_close", "Schliessen"),
-                      command=dlg.destroy).pack(side="right")
+            tk.Button(box, text=L.get("btn_open_log", "Log oeffnen"), command=open_log).pack(
+                side="left"
+            )
+            tk.Button(
+                box, text=L.get("btn_open_folder", "Ordner oeffnen"), command=open_folder
+            ).pack(side="left", padx=6)
+            tk.Button(box, text=L.get("btn_close", "Schliessen"), command=dlg.destroy).pack(
+                side="right"
+            )
         except Exception:
-            pass
+            log.debug("Abschlussdialog fehlgeschlagen", exc_info=True)
 
     def _open_path(self, path):
+        """Oeffnet eine Datei oder einen Ordner mit dem Standardprogramm."""
+        import subprocess
+        import sys
+
         try:
-            os.startfile(path)
+            if sys.platform.startswith("win"):
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
         except Exception:
+            log.debug("Oeffnen mit Standardprogramm fehlgeschlagen: %s", path, exc_info=True)
             try:
-                import subprocess
                 subprocess.Popen(["explorer", path])
             except Exception:
-                pass
+                log.debug("Auch explorer-Aufruf fehlgeschlagen: %s", path, exc_info=True)
 
     def _remember_paths(self):
         """Merkt sich den zuletzt gewaehlten Pfad je Feld dauerhaft.
@@ -741,7 +849,7 @@ class App(tk.Tk):
         Die Eingabefelder bleiben beim Start leer; gemerkt wird nur,
         was tatsaechlich gewaehlt oder eingetragen wurde."""
         try:
-            for key, var in (("q1", self.q1), ("q2", self.q2), ("ziel", self.ziel)):
+            for key, var in self._pfad_felder():
                 val = var.get().strip()
                 if val:
                     self._last_paths[key] = val
@@ -749,28 +857,68 @@ class App(tk.Tk):
         except Exception:
             pass
 
+    def _pfad_felder(self):
+        """(Speicher-Schluessel, tk-Variable) der drei Pfadfelder.
+
+        Einzige Quelle der Wahrheit fuer Buttons, Merken und Laden – so koennen
+        die Schluessel nicht mehr auseinanderlaufen."""
+        return (("q1", self.q1), ("q2", self.q2), ("ziel", self.ziel))
+
+    def _feld_key(self, var):
+        """Speicher-Schluessel zu einer Pfad-Variable (oder None)."""
+        for key, feld in self._pfad_felder():
+            if feld is var:
+                return key
+        return None
+
     # ---------- Einstellungen / Shortcuts ----------
     def _settings_path(self):
-        base = os.path.join(os.path.expanduser("~"), ".medien_sortierer")
-        try:
-            os.makedirs(base, exist_ok=True)
-        except Exception:
-            base = os.path.expanduser("~")
-        return os.path.join(base, "settings.json")
+        return os.path.join(app_dir(), "settings.json")
+
+    @staticmethod
+    def _geometry_zerlegen(geo):
+        """Zerlegt 'WxH+X+Y' (auch mit negativen Offsets) in Tupel oder None."""
+        m = re.match(r"^(\d+)x(\d+)([+-]\d+)([+-]\d+)$", geo or "")
+        if not m:
+            return None
+        return tuple(int(m.group(i)) for i in range(1, 5))
+
+    def _geometrie_passt(self, geo):
+        """Grobe Pruefung, ob das gemerkte Fenster sichtbar waere.
+
+        Negative Offsets haengen am rechten/unteren Rand und sind damit immer
+        sichtbar; nur bei positiven Offsets wird gegen die Bildschirmgroesse
+        geprueft. So landet das Fenster nach einem Monitorwechsel nicht
+        ausserhalb des sichtbaren Bereichs."""
+        zerlegt = self._geometry_zerlegen(geo)
+        if not zerlegt:
+            return False
+        breite, hoehe, x, y = zerlegt
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        if breite > sw or hoehe > sh:
+            return False
+        if x >= 0 and x + breite > sw:
+            return False
+        if y >= 0 and y + hoehe > sh:
+            return False
+        return True
 
     def _load_settings(self):
         import json
+
         try:
             with open(self._settings_path(), "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
+            log.debug("Einstellungen nicht lesbar", exc_info=True)
             data = {}
         self._settings = data if isinstance(data, dict) else {}
         geo = self._settings.get("geometry")
-        if geo:
+        if geo and self._geometrie_passt(geo):
             try:
                 self.geometry(geo)
             except Exception:
+                log.debug("Fenstergeometrie nicht anwendbar: %s", geo, exc_info=True)
                 pass
         lc = self._settings.get("lang")
         if lc in TRANSLATIONS:
@@ -779,7 +927,7 @@ class App(tk.Tk):
             self._apply_language()
         lp = self._settings.get("last_paths")
         if isinstance(lp, dict):
-            for key in ("q1", "q2", "ziel"):
+            for key, _var in self._pfad_felder():
                 val = lp.get(key)
                 if val:
                     self._last_paths[key] = val
@@ -787,6 +935,7 @@ class App(tk.Tk):
 
     def _save_settings(self):
         import json
+
         try:
             self._settings["geometry"] = self.winfo_geometry()
             self._settings["lang"] = self.lang_code
@@ -794,7 +943,7 @@ class App(tk.Tk):
             with open(self._settings_path(), "w", encoding="utf-8") as f:
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            log.debug("Einstellungen nicht speicherbar", exc_info=True)
 
     def _on_close(self):
         try:
@@ -812,8 +961,14 @@ class App(tk.Tk):
         self.bind("<Control-s>", lambda e: self._log_save())
 
     # ---------- Sonstiges ----------
-    def waehle(self, var, key="default"):
-        initial = self._last_paths.get(key) or var.get().strip() or None
+    def waehle(self, var, key=None):
+        """Oeffnet den Ordner-Dialog im zuletzt fuer dieses Feld genutzten Pfad.
+
+        Ohne ``key`` wird der Schluessel aus der Variable selbst bestimmt
+        (siehe ``_pfad_felder()``)."""
+        if key is None:
+            key = self._feld_key(var)
+        initial = (self._last_paths.get(key) if key else None) or var.get().strip() or None
         try:
             if initial and os.path.isdir(initial):
                 p = filedialog.askdirectory(initialdir=initial)
@@ -823,14 +978,82 @@ class App(tk.Tk):
             p = filedialog.askdirectory()
         if p:
             var.set(p)
-            self._last_paths[key] = p
+            if key:
+                self._last_paths[key] = p
             self._remember_paths()
+            if key == "ziel":
+                # Zielwechsel: Dedup-Freigabe neu bestimmen.
+                self._aktualisiere_dedup_freigabe()
+
+    def _dedup_kandidaten(self):
+        """Zielordner-Kandidaten fuer Dedup (mit 'Sorted'-Unterordner).
+
+        Wurde mit Quelle = Ziel sortiert, liegt das Ergebnis in '<Ziel>/Sorted'."""
+        ziel = self.ziel.get().strip()
+        if not ziel:
+            return []
+        return [ziel, os.path.join(ziel, SORT_UNTERORDNER)]
+
+    def _ziel_mit_index(self):
+        """Kandidat, in dem ein Sortierlauf seinen Index hinterlassen hat.
+
+        `_index.txt` schreibt der Sorter am Ende jedes echten Laufs – der
+        zuverlaessigste Marker fuer „dort wurde schon sortiert"."""
+        for kandidat in self._dedup_kandidaten():
+            try:
+                if os.path.exists(os.path.join(kandidat, "_index.txt")):
+                    return kandidat
+            except OSError:
+                continue
+        return None
+
+    def _dedup_ziel(self):
+        """Zielordner fuer den Dedup-Lauf (bevorzugt den sortierten Ordner)."""
+        return self._ziel_mit_index() or (self.ziel.get().strip() or None)
+
+    def _dedup_freigabe(self):
+        """True, wenn im gewaehlten Ziel schon sortiert wurde."""
+        return self._ziel_mit_index() is not None
+
+    def _aktualisiere_dedup_freigabe(self):
+        """Sperrt den Dedup-Modus, solange im Ziel noch nicht sortiert wurde."""
+        frei = self._dedup_freigabe()
+
+        # Direkt aus dem Namensraum lesen: getattr() wuerde bei einem
+        # Tk-Objekt ohne Fenster (Tests) in eine Rekursion laufen.
+        chk = self.__dict__.get("chk_dedup")
+        if chk is not None:
+            try:
+                chk.config(state="normal" if frei else "disabled")
+            except tk.TclError:
+                pass
+
+        if not frei and self.__dict__.get("dedup") is not None and self.dedup.get():
+            # Modus zuruecknehmen, sonst bliebe der gesperrte Tab aktiv.
+            self._syncing_mode = True
+            self.dedup.set(False)
+            self._syncing_mode = False
+            self._on_dedup_toggle()
+
+        self._setze_tab_titel(frei)
+        return frei
+
+    def _setze_tab_titel(self, frei):
+        """Tab-Beschriftung an die Freigabe anpassen (gesperrt/offen)."""
+        nb = self.__dict__.get("nb")
+        if nb is None:
+            return
+        L = self.lang
+        try:
+            nb.tab(1, text=L["mode_dedup"] if frei else L["mode_dedup_locked"])
+        except Exception:
+            log.debug("Tab-Titel konnte nicht gesetzt werden", exc_info=True)
 
     def _effektives_ziel(self):
         """Liefert (ziel, umgeleitet).
 
         Sind Quelle und Ziel derselbe Ordner, wird in den Unterordner
-        'Sort' umgeleitet, damit die unsortierten Quelldateien nicht
+        'Sorted' umgeleitet, damit die unsortierten Quelldateien nicht
         selbst in den Ziel-Index geraten."""
         ziel = self.ziel.get()
         try:
@@ -848,22 +1071,46 @@ class App(tk.Tk):
                 return os.path.join(ziel, SORT_UNTERORDNER), True
         return ziel, False
 
-    def start(self):
+    def _bestaetige_start(self):
+        """Prueft Eingaben und Bestaetigungen. False = Start abbrechen."""
         L = self.lang
-        if not self.q1.get() and not self.q2.get():
-            messagebox.showwarning(L["msg_missing_title"], L["msg_choose_source"])
-            return
 
-        if not self.dedup.get():
+        if self.dedup.get():
+            # Dedup laeuft im Zielordner – Quellen und Filter sind hier ohne
+            # Bedeutung.
             if not self.ziel.get():
                 messagebox.showwarning(L["msg_missing_title"], L["msg_choose_target"])
-                return
+                return False
+            if not self._dedup_freigabe():
+                messagebox.showinfo(
+                    L.get("confirm_force_title", "Hinweis"),
+                    L.get("hint_dedup_locked", ""),
+                )
+                return False
+            if self.dedup_force.get():
+                # Die erweiterte Regel vergleicht den Inhalt nicht – warnen.
+                return messagebox.askyesno(
+                    L.get("confirm_force_title", "Force mode"),
+                    L.get("confirm_force_msg", ""),
+                )
+            return True
 
-        if not self.dedup.get():
-            f1p = [s.strip() for s in self.filter1.get().split(",") if s.strip()]
-            f2p = [s.strip() for s in self.filter2.get().split(",") if s.strip()]
-            if not self._confirm_preview(f1p, f2p):
-                return
+        if not self.q1.get() and not self.q2.get():
+            messagebox.showwarning(L["msg_missing_title"], L["msg_choose_source"])
+            return False
+
+        if not self.ziel.get():
+            messagebox.showwarning(L["msg_missing_title"], L["msg_choose_target"])
+            return False
+
+        f1p = [s.strip() for s in self.filter1.get().split(",") if s.strip()]
+        f2p = [s.strip() for s in self.filter2.get().split(",") if s.strip()]
+        return self._confirm_preview(f1p, f2p)
+
+    def start(self):
+        if not self._bestaetige_start():
+            return
+        L = self.lang
 
         self._log_clear()
         self.stop_event.clear()
@@ -887,27 +1134,44 @@ class App(tk.Tk):
 
         if self.dedup.get():
             self.sorter = DedupSorter(
-                self.q1.get(), self.q2.get(), f1, f2,
+                self._dedup_ziel(),
                 self.trockenlauf.get(),
                 self.dedup_force.get(),
-                self.dedup_action.get() == "move",
-                L, self.log_q, self.stop_event)
+                L,
+                self.log_q,
+                self.stop_event,
+            )
         else:
-            gemeinsam = (self._aktueller_struct_key == "together")
+            gemeinsam = self._aktueller_struct_key == "together"
             ziel_pfad, umgeleitet = self._effektives_ziel()
             self.sorter = Sorter(
-                self.q1.get(), self.q2.get(), f1, f2,
+                self.q1.get(),
+                self.q2.get(),
+                f1,
+                f2,
                 ziel_pfad,
                 self.trockenlauf.get(),
                 self.skip_existing.get(),
                 gemeinsam,
                 self._aktueller_gran_key,
                 self._aktueller_naming_key,
-                L, self.log_q, self.stop_event,
-                ziel_umgeleitet=umgeleitet)
+                L,
+                self.log_q,
+                self.stop_event,
+                ziel_umgeleitet=umgeleitet,
+            )
         self.sorter.start()
 
-    def stoppen(self):
+    def stoppen(self, confirm=True):
+        sorter = getattr(self, "sorter", None)
+        laeuft = sorter is not None and sorter.is_alive()
+        if confirm and laeuft and not self.stop_event.is_set():
+            L = self.lang
+            if not messagebox.askyesno(
+                L.get("confirm_cancel_title", "Cancel"),
+                L.get("confirm_cancel_msg", "Stop the current run?"),
+            ):
+                return
         self.stop_event.set()
         self.btn_stop.config(state="disabled")
 
@@ -923,15 +1187,9 @@ class App(tk.Tk):
         elif isinstance(self._idx_state, tuple):
             cur, tot = self._idx_state
             pct = cur / tot * 100 if tot else 0
-            text = {
-                "de": f"Ziel-Index: {cur}/{tot}  ({pct:.1f}%)",
-                "en": f"Target index: {cur}/{tot}  ({pct:.1f}%)",
-                "ru": f"Индекс цели: {cur}/{tot}  ({pct:.1f}%)",
-                "fr": f"Index cible : {cur}/{tot}  ({pct:.1f}%)",
-                "es": f"Índice: {cur}/{tot}  ({pct:.1f}%)",
-                "pl": f"Indeks celu: {cur}/{tot}  ({pct:.1f}%)",
-                "tr": f"Hedef dizini: {cur}/{tot}  ({pct:.1f}%)",
-            }.get(self.lang_code, f"{cur}/{tot} ({pct:.1f}%)")
+            text = L.get("lbl_index_progress", "{cur}/{tot}  ({pct}%)").format(
+                cur=cur, tot=tot, pct=f"{pct:.1f}"
+            )
             if self._phase_aktiv == "index" and self.phase_start is not None:
                 phase = str(datetime.now() - self.phase_start).split(".")[0]
                 text += f"   |   {L['index_time']}: {phase}"
@@ -942,15 +1200,9 @@ class App(tk.Tk):
         else:
             cur, tot = self._sort_state
             pct = min(100, cur / tot * 100) if tot else 0
-            base = {
-                "de": f"Sortierung: {cur}/{tot}  ({pct:.1f}%)",
-                "en": f"Sorting: {cur}/{tot}  ({pct:.1f}%)",
-                "ru": f"Сортировка: {cur}/{tot}  ({pct:.1f}%)",
-                "fr": f"Tri : {cur}/{tot}  ({pct:.1f}%)",
-                "es": f"Clasificación: {cur}/{tot}  ({pct:.1f}%)",
-                "pl": f"Sortowanie: {cur}/{tot}  ({pct:.1f}%)",
-                "tr": f"Sıralama: {cur}/{tot}  ({pct:.1f}%)",
-            }.get(self.lang_code, f"{cur}/{tot} ({pct:.1f}%)")
+            base = L.get("lbl_sort_progress", "{cur}/{tot}  ({pct}%)").format(
+                cur=cur, tot=tot, pct=f"{pct:.1f}"
+            )
 
         if self.start_zeit is not None:
             if self.ende_zeit is not None:
@@ -1005,14 +1257,12 @@ class App(tk.Tk):
                     self.ende_zeit = datetime.now()
                     self._refresh_progress_labels()
                     self._set_status(self.lang.get("status_ready", "Bereit"))
+                    # Nach einem Lauf kann Dedup freigeschaltet sein.
+                    self._aktualisiere_dedup_freigabe()
                     self.after(200, self._show_finish_dialog)
                     continue
 
                 self._append_log(text, tag)
-
-                if tag == "error":
-                    self.btn_start.config(state="normal")
-                    self.btn_stop.config(state="disabled")
 
         except queue.Empty:
             pass
