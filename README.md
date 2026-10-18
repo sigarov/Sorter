@@ -14,7 +14,11 @@ Tkinter-Tool zum Sortieren und Entdoppeln von Bildern und Videos.
   gleichem Namen sind, und den Ordner danach selbst aufraeumen. Der Ordner
   `Duplicates` wird beim Sortieren uebersprungen. Fehlt die Basisdatei, wird
   auch eine einzelne `NAME_1.jpg` in `NAME.jpg` umbenannt.
-- **Trockenlauf:** simuliert alle Aktionen, ohne Dateien zu veraendern.
+- **Trockenlauf:** simuliert alle Aktionen, ohne Dateien zu veraendern. Die
+  dabei gelesenen Ziel-Hashes werden fuer den naechsten echten Lauf
+  zwischengespeichert (`~/.medien_sortierer/index-cache`), damit der Zielordner
+  nicht zweimal komplett gelesen wird. `_index.txt` entsteht weiterhin nur im
+  echten Lauf.
 - **Mehrsprachig:** Englisch, Deutsch, Russisch, Franzoesisch, Spanisch,
   Polnisch, Tuerkisch.
 
@@ -51,6 +55,10 @@ ruff check .
 ruff format --check .
 ```
 
+Die Uebersetzungen liegen pro Sprache in `translations/` (`de.py`, `en.py`, ...).
+`translations/__init__.py` buendelt sie nur noch zu `TRANSLATIONS`; Textaenderungen
+gehoeren in die jeweilige Sprachdatei.
+
 ## Ablauf
 
 1. **Sortieren** – Quellen waehlen, Ziel waehlen, starten. Im Ziel entsteht die
@@ -74,6 +82,9 @@ erklaert das und springt zurueck zum Sortieren.
   Sprachwechsel stabil.
 - Im Zielordner beschleunigt ein Index (`_index.txt`) spaetere Laeufe erheblich.
   Er dient zugleich als Merkmal „hier wurde schon sortiert".
+- Ein Trockenlauf schreibt **keine** `_index.txt` und gibt die Bereinigung nicht
+  frei. Er legt nur einen Hash-Cache im App-Verzeichnis ab; der naechste echte
+  Lauf nutzt ihn und entfernt ihn danach.
 - Vor dem Kopieren wird der freie Speicherplatz im Ziel geprueft; reicht er
   nicht, bricht der Lauf mit einer Meldung ab.
 - Log und Einstellungen liegen im Ordner `~/.medien_sortierer`

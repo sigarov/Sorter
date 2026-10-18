@@ -58,7 +58,25 @@ class App(tk.Tk):
     def __init__(self):
         _enable_dpi_awareness()
         super().__init__()
-        self.modus_var = tk.StringVar(value="sort")
+        self._init_vars()
+        self._init_window()
+        self._build_ui()
+
+        self._apply_language()
+        self._on_dedup_toggle()
+
+        self.after(200, self.poll_log)
+        self.after(1000, self._aktualisiere_zeiten)
+
+        self._load_settings()
+        self._bind_shortcuts()
+        # Dedup erst freigeben, wenn im Ziel schon sortiert wurde.
+        self._aktualisiere_dedup_freigabe()
+        self._ui_ready = True
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._set_status(self.lang.get("status_ready", "Bereit"))
+
+    def _init_vars(self):
         self._log_lines = deque(maxlen=MAX_LOG_ZEILEN)
         self._log_only_errors = tk.BooleanVar(value=False)
         self._log_autoscroll = tk.BooleanVar(value=True)
@@ -69,11 +87,6 @@ class App(tk.Tk):
         self._ui_ready = False
         self.lang_code = "de"
         self.lang = TRANSLATIONS[self.lang_code]
-
-        self.geometry("920x800")
-        self.resizable(True, True)
-        self.minsize(800, 680)
-        self.configure(padx=12, pady=10)
 
         self.q1 = tk.StringVar()
         self.q2 = tk.StringVar()
@@ -106,6 +119,30 @@ class App(tk.Tk):
 
         self._text_widgets = {}
 
+    def _init_window(self):
+        self.geometry("920x800")
+        self.resizable(True, True)
+        self.minsize(800, 680)
+        self.configure(padx=12, pady=10)
+
+    def _build_ui(self):
+        self._build_language_bar()
+
+        fr_main = tk.Frame(self)
+        fr_main.pack(fill="x", pady=(0, 6))
+        fr_main.columnconfigure(0, weight=1, uniform="col")
+        fr_main.columnconfigure(1, weight=1, uniform="col")
+
+        left_col = tk.Frame(fr_main)
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        self._build_sources_column(left_col)
+        self._build_options_column(fr_main)
+
+        self._build_separator()
+        self._build_log_panel()
+        self._build_status_bar()
+
+    def _build_language_bar(self):
         # ---------- Sprache (oben) ----------
         fr_lang = tk.Frame(self)
         fr_lang.pack(fill="x", pady=(0, 6))
@@ -121,54 +158,48 @@ class App(tk.Tk):
         self.cmb_lang.pack(side="left", padx=6)
         self.cmb_lang.bind("<<ComboboxSelected>>", self._on_lang_change)
 
-        # ---------- Hauptbereich: 2 Spalten (links Ordner, rechts Optionen) ----------
-        fr_main = tk.Frame(self)
-        fr_main.pack(fill="x", pady=(0, 6))
-        fr_main.columnconfigure(0, weight=1, uniform="col")
-        fr_main.columnconfigure(1, weight=1, uniform="col")
+    def _build_sources_column(self, parent):
+        self.q1_entry, self.btn_w1, self.filter1_entry = self._build_source_block(
+            parent, 1, self.q1, self.filter1
+        )
+        self.q2_entry, self.btn_w2, self.filter2_entry = self._build_source_block(
+            parent, 2, self.q2, self.filter2, pady=(10, 0)
+        )
+        self._build_target_block(parent)
+        self._build_action_buttons(parent)
+        self._build_progress_bars(parent)
 
-        # ================= LINKE SPALTE: Ordner untereinander =================
-        left_col = tk.Frame(fr_main)
-        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+    def _build_source_block(self, parent, nummer, pfad_var, filter_var, pady=(0, 0)):
+        """Baut einen Quellblock (Pfad, Waehlen-Button, Filter, Hinweis)."""
+        block = tk.Frame(parent)
+        block.pack(fill="x", pady=pady)
 
-        # --- Laufwerk / Ordner 1 ---
-        left1 = tk.Frame(left_col)
-        left1.pack(fill="x")
-        self._text_widgets["lbl_source1"] = tk.Label(left1, text="", font=("", 10, "bold"))
-        self._text_widgets["lbl_source1"].pack(anchor="w")
-        fr1 = tk.Frame(left1)
-        fr1.pack(fill="x", pady=(0, 3))
-        self.q1_entry = tk.Entry(fr1, textvariable=self.q1)
-        self.q1_entry.pack(side="left", fill="x", expand=True)
-        self.btn_w1 = tk.Button(fr1, text="", command=lambda: self.waehle(self.q1))
-        self.btn_w1.pack(side="left", padx=(4, 0))
-        self._text_widgets["lbl_filter1"] = tk.Label(left1, text="", fg="#444")
-        self._text_widgets["lbl_filter1"].pack(anchor="w")
-        self.filter1_entry = tk.Entry(left1, textvariable=self.filter1)
-        self.filter1_entry.pack(fill="x", pady=(0, 1))
-        self._text_widgets["lbl_filter_hint1"] = tk.Label(left1, text="", fg="#888", font=("", 8))
-        self._text_widgets["lbl_filter_hint1"].pack(anchor="w")
+        label = tk.Label(block, text="", font=("", 10, "bold"))
+        label.pack(anchor="w")
+        self._text_widgets[f"lbl_source{nummer}"] = label
 
-        # --- Laufwerk / Ordner 2 ---
-        left2 = tk.Frame(left_col)
-        left2.pack(fill="x", pady=(10, 0))
-        self._text_widgets["lbl_source2"] = tk.Label(left2, text="", font=("", 10, "bold"))
-        self._text_widgets["lbl_source2"].pack(anchor="w")
-        fr2 = tk.Frame(left2)
-        fr2.pack(fill="x", pady=(0, 3))
-        self.q2_entry = tk.Entry(fr2, textvariable=self.q2)
-        self.q2_entry.pack(side="left", fill="x", expand=True)
-        self.btn_w2 = tk.Button(fr2, text="", command=lambda: self.waehle(self.q2))
-        self.btn_w2.pack(side="left", padx=(4, 0))
-        self._text_widgets["lbl_filter2"] = tk.Label(left2, text="", fg="#444")
-        self._text_widgets["lbl_filter2"].pack(anchor="w")
-        self.filter2_entry = tk.Entry(left2, textvariable=self.filter2)
-        self.filter2_entry.pack(fill="x", pady=(0, 1))
-        self._text_widgets["lbl_filter_hint2"] = tk.Label(left2, text="", fg="#888", font=("", 8))
-        self._text_widgets["lbl_filter_hint2"].pack(anchor="w")
+        row = tk.Frame(block)
+        row.pack(fill="x", pady=(0, 3))
+        entry = tk.Entry(row, textvariable=pfad_var)
+        entry.pack(side="left", fill="x", expand=True)
+        button = tk.Button(row, text="", command=lambda v=pfad_var: self.waehle(v))
+        button.pack(side="left", padx=(4, 0))
 
-        # --- Ziel (3. Laufwerk) ---
-        left3 = tk.Frame(left_col)
+        filter_label = tk.Label(block, text="", fg="#444")
+        filter_label.pack(anchor="w")
+        self._text_widgets[f"lbl_filter{nummer}"] = filter_label
+
+        filter_entry = tk.Entry(block, textvariable=filter_var)
+        filter_entry.pack(fill="x", pady=(0, 1))
+
+        hint = tk.Label(block, text="", fg="#888", font=("", 8))
+        hint.pack(anchor="w")
+        self._text_widgets[f"lbl_filter_hint{nummer}"] = hint
+
+        return entry, button, filter_entry
+
+    def _build_target_block(self, parent):
+        left3 = tk.Frame(parent)
         left3.pack(fill="x", pady=(10, 0))
         self._text_widgets["lbl_target"] = tk.Label(left3, text="", font=("", 10, "bold"))
         self._text_widgets["lbl_target"].pack(anchor="w")
@@ -182,8 +213,8 @@ class App(tk.Tk):
         self.ziel_entry.bind("<KeyRelease>", lambda _e: self._aktualisiere_dedup_freigabe())
         self.ziel_entry.bind("<FocusOut>", lambda _e: self._aktualisiere_dedup_freigabe())
 
-        # --- Start/Stop direkt unter Target (linke Spalte) ---
-        btn_box = tk.Frame(left_col)
+    def _build_action_buttons(self, parent):
+        btn_box = tk.Frame(parent)
         btn_box.pack(fill="x", pady=(8, 12))
         self.btn_start = tk.Button(
             btn_box,
@@ -214,14 +245,14 @@ class App(tk.Tk):
         )
         self.btn_stop.pack(side="left", padx=8)
 
-        # --- Target-Index & Sortierung (ganz unten links, ueber der punktierten Linie) ---
-        idx_box = tk.Frame(left_col)
+    def _build_progress_bars(self, parent):
+        idx_box = tk.Frame(parent)
         self.lbl_index = tk.Label(idx_box, text="", font=("", 9), fg="#555")
         self.lbl_index.pack(anchor="w")
         self.progress_index = ttk.Progressbar(idx_box, mode="determinate")
         self.progress_index.pack(fill="x", pady=(2, 0))
 
-        srt_box = tk.Frame(left_col)
+        srt_box = tk.Frame(parent)
         self.lbl_sort = tk.Label(srt_box, text="", font=("", 9), fg="#555")
         self.lbl_sort.pack(anchor="w")
         self.progress = ttk.Progressbar(srt_box, mode="determinate")
@@ -231,6 +262,7 @@ class App(tk.Tk):
         srt_box.pack(side="bottom", fill="x")
         idx_box.pack(side="bottom", fill="x", pady=(0, 6))
 
+    def _build_options_column(self, fr_main):
         # ================= RECHTE SPALTE: Optionen in Gruppen =================
         right_col = tk.Frame(fr_main)
         right_col.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
@@ -322,11 +354,13 @@ class App(tk.Tk):
         self.cmb_gran.pack(side="left", padx=6)
         self.cmb_gran.bind("<<ComboboxSelected>>", self._on_gran_change)
 
+    def _build_separator(self):
         # ---------- Gestrichelte Trennlinie ----------
         canvas = tk.Canvas(self, height=2, bd=0, highlightthickness=0)
         canvas.pack(fill="x", pady=10)
         canvas.create_line(0, 0, 2000, 0, dash=(4, 4), fill="#888")
 
+    def _build_log_panel(self):
         # ---------- Log ----------
         log_head = tk.Frame(self)
         log_head.pack(fill="x")
@@ -370,6 +404,7 @@ class App(tk.Tk):
         self.txt = tk.Text(self, height=15, bg="#111", fg="#eee", font=("Consolas", 9))
         self.txt.pack(fill="both", expand=True)
 
+    def _build_status_bar(self):
         # ---------- Statusleiste ----------
         status = tk.Label(
             self,
@@ -387,20 +422,6 @@ class App(tk.Tk):
         self.txt.tag_config("error", foreground="#ef476f")
         self.txt.tag_config("report", foreground="#06d6a0")
         self.txt.tag_config("progress", foreground="#cccccc")
-
-        self._apply_language()
-        self._on_dedup_toggle()
-
-        self.after(200, self.poll_log)
-        self.after(1000, self._aktualisiere_zeiten)
-
-        self._load_settings()
-        self._bind_shortcuts()
-        # Dedup erst freigeben, wenn im Ziel schon sortiert wurde.
-        self._aktualisiere_dedup_freigabe()
-        self._ui_ready = True
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._set_status(self.lang.get("status_ready", "Bereit"))
 
     # ---------- Sprachwechsel ----------
     def _on_lang_change(self, event=None):
@@ -522,7 +543,6 @@ class App(tk.Tk):
         self._text_widgets["lbl_dedup_hint"].config(text=self.lang.get("hint_dedup_move", ""))
 
     def _on_dedup_toggle(self):
-        self.modus_var.set("dedup" if self.dedup.get() else "sort")
         self._sync_tab()
         dedup = self.dedup.get()
 
@@ -591,10 +611,6 @@ class App(tk.Tk):
         messagebox.showinfo(titel, text)
 
     # ---------- Modus / Tabs ----------
-    def _on_mode_change(self):
-        self.dedup.set(self.modus_var.get() == "dedup")
-        self._on_dedup_toggle()
-
     def _on_tab_change(self, event=None):
         if not getattr(self, "_ui_ready", False):
             return

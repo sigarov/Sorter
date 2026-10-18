@@ -1,5 +1,6 @@
 """Sorter-Thread: kopiert und sortiert Medien in den Zielordner."""
 
+import hashlib
 import logging
 import os
 import re
@@ -13,6 +14,7 @@ from config import (
     FOLDER_VIDEOS,
     NAMING_OPTIONS,
     SKIP_NAMES,
+    app_dir,
     ist_dupes_ordner,
 )
 from utils import (
@@ -28,6 +30,10 @@ from utils import (
 from worker_base import MediaWorker
 
 log = logging.getLogger(__name__)
+
+# Eigener Cache fuer den Trockenlauf. Bewusst NICHT _index.txt: diese Datei
+# ist der Freigabe-Marker fuer den Dedup-Tab.
+INDEX_CACHE_KOPF = "# MedienSortierer Index-Cache v1"
 
 
 class Sorter(MediaWorker):
@@ -121,8 +127,67 @@ class Sorter(MediaWorker):
                 for rel, (h, size_s, mtime_s) in self.index_entries.items():
                     f.write(f"{h}|{size_s}|{mtime_s}|{rel}\n")
             tmp.replace(index_file)
+            return True
         except Exception as e:
             self.melde(self.T("log_index_save_error", e=e), "warn")
+            return False
+
+    def _index_cache_pfad(self):
+        """Cache-Datei im App-Verzeichnis, eine pro Zielordner."""
+        key = os.path.normcase(os.path.abspath(str(self.ziel)))
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
+        return Path(app_dir()) / "index-cache" / f"{digest}.txt"
+
+    def _lade_index_cache(self):
+        """Eintraege aus dem Trockenlauf-Cache (gleiches Format wie der Index)."""
+        idx = {}
+        pfad = self._index_cache_pfad()
+        try:
+            if not pfad.exists():
+                return idx
+            with open(lang_pfad(pfad), "r", encoding="utf-8") as f:
+                if f.readline().rstrip("\n") != INDEX_CACHE_KOPF:
+                    return idx
+                for line in f:
+                    line = line.rstrip("\n")
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split("|", 3)
+                    if len(parts) != 4:
+                        continue
+                    h, size_s, mtime_s, rel = parts
+                    idx[rel] = (h, size_s, mtime_s)
+        except Exception as e:
+            self.melde(self.T("log_index_cache_read_error", e=e), "warn")
+        return idx
+
+    def _speichere_index_cache(self):
+        """Merkt sich die Ziel-Hashes des Trockenlaufs fuer den Echtlauf."""
+        pfad = self._index_cache_pfad()
+        tmp = pfad.with_name(f"{pfad.name}.{os.getpid()}.tmp")
+        try:
+            pfad.parent.mkdir(parents=True, exist_ok=True)
+            with open(lang_pfad(tmp), "w", encoding="utf-8") as f:
+                f.write(INDEX_CACHE_KOPF + "\n")
+                f.write(f"# Ziel: {self.ziel}\n")
+                f.write("# Format: md5_hash|size|mtime_ns|relativer_pfad\n")
+                for rel, (h, size_s, mtime_s) in self.index_entries.items():
+                    f.write(f"{h}|{size_s}|{mtime_s}|{rel}\n")
+            os.replace(lang_pfad(tmp), lang_pfad(pfad))
+            self.melde(self.T("log_index_cache_saved", n=len(self.index_entries)))
+        except Exception as e:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+            self.melde(self.T("log_index_cache_save_error", e=e), "warn")
+
+    def _loesche_index_cache(self):
+        try:
+            self._index_cache_pfad().unlink(missing_ok=True)
+        except OSError:
+            log.debug("Index-Cache nicht entfernbar", exc_info=True)
 
     def indexiere_ziel(self):
         known = {}
@@ -152,6 +217,12 @@ class Sorter(MediaWorker):
         self.melde_index(0, total)
 
         cached = self.lade_index()
+        cache = self._lade_index_cache()
+        if cache:
+            self.melde(self.T("log_index_cache_loaded", n=len(cache)))
+            # _index.txt gewinnt bei gleichem Pfad; der Cache ergaenzt Dateien,
+            # die seit dem letzten echten Lauf dazugekommen sind.
+            cached = {**cache, **cached}
         self.melde(self.T("log_index_loaded", n=len(cached)))
 
         neu_berechnet = 0
@@ -196,6 +267,13 @@ class Sorter(MediaWorker):
         self.melde(
             self.T("log_index_done", cache=cache_hits, new=neu_berechnet, skip=fehlend), "info"
         )
+
+        # Der Trockenlauf veraendert das Ziel nicht. Seine Hashes sind daher
+        # fuer den naechsten echten Lauf gueltig und sparen eine komplette
+        # Leserunde ueber den Zielordner.
+        if self.trockenlauf:
+            self._speichere_index_cache()
+
         return known
 
     def naechste_nummer(self, ziel_dir):
@@ -450,8 +528,10 @@ class Sorter(MediaWorker):
 
             if not self.trockenlauf:
                 self.melde(self.T("log_saving_index"))
-                self.speichere_index()
-                self.melde(self.T("log_index_saved", n=len(self.index_entries)))
+                if self.speichere_index():
+                    # _index.txt ist jetzt vollstaendiger als der Trockenlauf-Cache.
+                    self._loesche_index_cache()
+                    self.melde(self.T("log_index_saved", n=len(self.index_entries)))
 
                 if self.ohne_datum_liste:
                     liste_pfad = self.ziel / self.no_date_folder / "_liste.txt"

@@ -57,12 +57,22 @@ def test_keine_unbenutzten_keys():
 
 
 def test_translations_einheitlich_eingerueckt():
-    """Sprachbloecke 4 Leerzeichen, Schluessel 8 Leerzeichen, keine Tabs."""
-    quelle = (PROJEKT / "translations.py").read_text(encoding="utf-8")
-    for nr, zeile in enumerate(quelle.splitlines(), 1):
-        einzug = len(zeile) - len(zeile.lstrip())
-        assert "\t" not in zeile[:einzug], f"Zeile {nr}: Tab statt Leerzeichen"
-        if re.match(r'^\s*"[a-z0-9_]+":\s*\{$', zeile):
-            assert einzug == 4, f"Zeile {nr}: Sprachblock mit {einzug} Einzug"
-        elif re.match(r'^\s*"[a-z0-9_]+":', zeile):
-            assert einzug == 8, f"Zeile {nr}: Schluessel mit {einzug} Einzug"
+    """Sprachdateien: 4 Leerzeichen pro Ebene, keine Tabs."""
+    dateien = [PROJEKT / "translations" / f"{code}.py" for code in TRANSLATIONS]
+    for datei in dateien:
+        assert datei.exists(), f"{datei} fehlt"
+        quelle = datei.read_text(encoding="utf-8")
+        for nr, zeile in enumerate(quelle.splitlines(), 1):
+            einzug = len(zeile) - len(zeile.lstrip())
+            assert "\t" not in zeile[:einzug], f"{datei.name}: Zeile {nr}: Tab statt Leerzeichen"
+            if re.match(r'^\s*"[a-z0-9_]+":', zeile):
+                assert einzug == 4, f"{datei.name}: Zeile {nr}: Schluessel mit {einzug} Einzug"
+
+
+def test_sprachmodule_exportieren_dicts():
+    """Jede Sprache liegt in einer eigenen Datei und exportiert ein Dict."""
+    from importlib import import_module
+
+    for code in TRANSLATIONS:
+        modul = import_module(f"translations.{code}")
+        assert isinstance(getattr(modul, code.upper()), dict), f"translations.{code}"

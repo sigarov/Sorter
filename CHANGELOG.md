@@ -45,6 +45,11 @@ sortiert (V-001 oben, neuester Eintrag unten).
 | V-035 | 2026-10-08 | `ruff format` eingeführt, CI erweitert, Doku/Installation geklärt | `pyproject.toml`, `.github/workflows/ci.yml`, `README.md`, `requirements.txt`, alle `.py` |
 | V-036 | 2026-10-08 | Duplikat-Ordner `_Duplikate` → `Duplicates` (+ Abwärtskompatibilität) | `config.py`, `translations.py`, `worker_base.py`, `dedup_sorter.py`, `gui.py`, `README.md`, `tests/` |
 | V-037 | 2026-10-08 | Dedup läuft nur im Zielordner und erst nach dem ersten Sortierlauf | `dedup_sorter.py`, `sorter.py`, `gui.py`, `help_texts.py`, `translations.py`, `conftest.py`, `README.md`, `tests/` |
+| V-038 | 2026-10-13 | Build-Skripte für Windows-EXE und Linux-AppImage | `.gitignore`, `build_windows.bat` (neu), `build_linux_appimage.sh` (neu) |
+| V-039 | 2026-10-18 | Trockenlauf-Cache beschleunigt den folgenden Echtlauf | `sorter.py`, `translations.py`, `README.md`, `tests/test_index_cache.py` (neu) |
+| V-040 | 2026-10-18 | Übersetzungen nach Sprachen aufgeteilt (`i18n/`) | `translations.py`, `i18n/` (neu), `pyproject.toml`, `tests/test_i18n.py` |
+| V-041 | 2026-10-18 | Sprachdateien in das Package `translations/` verschoben | `translations/` (neu), `translations.py` (entfernt), `pyproject.toml`, `tests/test_i18n.py`, `README.md` |
+| V-042 | 2026-10-18 | GUI-Initialisierung in `_build_*`-Methoden zerlegt, Altlasten entfernt | `gui.py`, `CHANGELOG.md` |
 
 ---
 
@@ -670,6 +675,194 @@ Dialog haengen bleiben.
 
 ---
 
+### V-038 – Build-Skripte fuer Windows-EXE und Linux-AppImage
+
+Bisher gab es keinen reproduzierbaren Weg, aus dem Projekt eine
+weitergebbare Anwendung zu bauen. Jetzt liegen zwei Skripte bei, die
+PyInstaller interaktiv aufrufen und die Umgebung vorab pruefen. Beide fragen
+Eingabedatei (Standard `main.py`) und App-Namen ab, zeigen eine Zusammenfassung
+und lassen sich vor dem Start abbrechen.
+
+**1. `build_windows.bat` – Windows-EXE**
+- Sucht Python bevorzugt ueber den `py`-Launcher, sonst `python`; bricht mit
+  einer Installationsanleitung ab, wenn keins gefunden wird.
+- Installiert PyInstaller nur, wenn es fehlt.
+- Baut `--onefile --windowed` nach `dist\<Name>.exe`; ein angehaengtes `.exe`
+  im eingegebenen Namen wird entfernt.
+
+**2. `build_linux_appimage.sh` – Linux-AppImage**
+- Laeuft nur unter Linux und bricht auf Windows/macOS mit Hinweis auf WSL2/VM
+  ab.
+- Prueft `python3`, `wget`, `file` und `tkinter` vorab, damit Tk spaeter nicht
+  in der AppImage fehlt.
+- Baut in einer eigenen `.build-venv` mit `--onedir --windowed`, erzeugt
+  `AppDir` inklusive `AppRun` und `.desktop`-Datei und uebernimmt `icon.png`
+  (sonst wird ein schlichtes Platzhalter-Icon erzeugt).
+- Holt `appimagetool` nur bei Bedarf und weicht bei fehlendem FUSE auf
+  `--appimage-extract-and-run` aus; Ergebnis ist `<Name>-x86_64.AppImage`.
+
+**3. `.gitignore` ergaenzt**
+- PyInstaller-/AppImage-Artefakte werden ignoriert: `*.spec`, `AppDir/`,
+  `.build-venv/`, `appimagetool-*.AppImage`, `*.AppImage`. Die Build-Skripte
+  selbst bleiben versioniert.
+
+**Geprueft:** `bash -n build_linux_appimage.sh` ohne Fehler; Abbruchpfad und
+tkinter-Schutzpfad getestet; Ignorier-Regeln greifen (eine beim ersten Build
+entstandene `Sortierer.spec` bleibt bewusst untracked).
+
+**Dateien:** `.gitignore`, `build_windows.bat` (neu),
+`build_linux_appimage.sh` (neu)
+
+---
+
+### V-039 – Trockenlauf-Cache beschleunigt den folgenden Echtlauf
+
+Bisher hat der Trockenlauf den Zielordner zwar vollstaendig gehasht, das
+Ergebnis aber weggeworfen. Der Echtlauf begann danach wieder bei null und las
+alle Zieldateien erneut – derselbe Zyklus also zweimal. Jetzt uebernimmt der
+Echtlauf die Hashes des Trockenlaufs.
+
+**1. Separater Cache statt `_index.txt`**
+- Der Trockenlauf schreibt am Ende von `indexiere_ziel()` seine
+  `index_entries` in `~/.medien_sortierer/index-cache/<hash>.txt`
+  (eine Datei pro Zielordner, Schluessel aus dem normalisierten Zielpfad).
+- `_index.txt` bleibt unangetastet: Sie ist der Freigabe-Marker fuer den
+  Dedup-Tab und entsteht weiterhin nur im echten Lauf.
+- Der Cache hat denselben Zeilentyp wie der Index, zusaetzlich einen
+  Versionskopf und den Zielpfad. Geschrieben wird atomar ueber eine
+  PID-eindeutige `.tmp`-Datei und `os.replace`.
+
+**2. Echtlauf nutzt beide Quellen**
+- `indexiere_ziel()` laedt `_index.txt` **und** den Trockenlauf-Cache und
+  fuehrt sie zusammen. Bei gleichem Pfad gewinnt `_index.txt`; der Cache
+  ergaenzt Dateien, die seit dem letzten echten Lauf dazugekommen sind.
+- Die Gueltigkeit prueft weiterhin jede Datei einzeln ueber Groesse und
+  mtime_ns. Geaenderte, neue oder geloeschte Dateien werden wie bisher
+  behandelt; veraltete Eintraege werden einfach neu gehasht.
+- Nach einem erfolgreichen `speichere_index()` wird der Cache geloescht –
+  `_index.txt` ist dann vollstaendiger. Schlaegt das Speichern fehl, bleibt
+  der Cache als Rueckfallebene erhalten (`speichere_index()` liefert dafuer
+  jetzt einen Bool).
+
+**3. Meldungen und Tests**
+- Vier neue Uebersetzungs-Keys in allen 7 Sprachen: Cache geladen,
+  gespeichert, Lese- und Schreibfehler.
+- `tests/test_index_cache.py` prueft: Trockenlauf legt Cache, aber keinen
+  Index an; Echtlauf hasht Zieldateien nicht erneut und entfernt den Cache;
+  Duplikaterkennung funktioniert trotz Cache; geaenderte Zieldatei wird neu
+  gehasht; kaputter Cache wird ignoriert; Cache ist pro Ziel getrennt.
+
+**Geprueft:** `python -m pytest` 99 Tests, alle gruen; `ruff check .` und
+`ruff format --check .` ohne Befund.
+
+**Dateien:** `sorter.py`, `translations.py`, `README.md`,
+`tests/test_index_cache.py` (neu)
+
+---
+
+### V-040 – Uebersetzungen nach Sprachen aufgeteilt
+
+`translations.py` war mit 977 Zeilen und 136 Keys in 7 Sprachen unhandlich.
+Die Datei ist jetzt nur noch ein Aggregator; jede Sprache liegt in einer
+eigenen Datei unter `i18n/`.
+
+**1. Aufteilung**
+- `i18n/en.py`, `de.py`, `ru.py`, `fr.py`, `es.py`, `pl.py`, `tr.py` mit je
+  140 Zeilen; jedes Modul exportiert ein Dict (`EN`, `DE`, ...).
+- `translations.py` importiert die sieben Dicts und baut `TRANSLATIONS`
+  unveraendert in der bisherigen Reihenfolge zusammen.
+- Die Werte wurden maschinell aus dem alten Modul uebernommen und vor dem
+  Schreiben auf Gleichheit geprueft (alle 952 Eintraege identisch).
+
+**2. Packaging**
+- `pyproject.toml`: `i18n` als Package eingetragen. Ein Wheel-Build enthaelt
+  `translations.py` und alle sieben Sprachmodule.
+- PyInstaller/EXE/AppImage: keine Aenderung noetig, die Module werden ueber
+  die Imports automatisch gebunden (keine Datendateien, kein `--add-data`).
+
+**3. Tests**
+- `test_i18n.py` prueft die Einrueckung jetzt in allen `i18n/*.py`
+  (Schluessel mit 4 Leerzeichen) und dass jedes Sprachmodul ein Dict
+  exportiert.
+- Unveraendert: gleiche Key-Menge in allen Sprachen, keine unbenutzten Keys,
+  Help-Texte.
+
+**Geprueft:** `python -m pytest` 100 Tests gruen; `ruff check .` und
+`ruff format --check .` ohne Befund; Wheel-Build enthaelt `i18n/*.py`.
+
+**Dateien:** `translations.py`, `i18n/` (neu), `pyproject.toml`,
+`tests/test_i18n.py`
+
+> Hinweis: Der Zwischenschritt mit `i18n/` wurde direkt anschliessend in
+> V-041 in das Package `translations/` ueberfuehrt.
+
+---
+
+### V-041 – Sprachdateien in das Package `translations/`
+
+V-040 hatte die Sprachen in ein separates `i18n/`-Package gelegt und
+`translations.py` als Aggregator stehen lassen. Jetzt ist auch der Aggregator
+ein Package: `translations/__init__.py`. Damit gibt es nur noch einen
+Übersetzungsordner.
+
+- `i18n/en.py` … `tr.py` → `translations/en.py` … `tr.py`; die Inhalte
+  wurden unveraendert uebernommen.
+- `translations/__init__.py` importiert mit relativen Imports
+  (`from .de import DE`, …) und baut `TRANSLATIONS` in der bisherigen
+  Reihenfolge zusammen.
+- `translations.py` ist entfallen.
+- `pyproject.toml`: `translations` ist jetzt ein Package; der Eintrag in
+  `py-modules` wurde entfernt.
+- Tests: Einrueckungspruefung und Modul-Import laufen ueber
+  `translations/*.py`.
+- Der oeffentliche Import bleibt unveraendert:
+  `from translations import TRANSLATIONS`.
+
+**Geprueft:** Der Inhalt ist vor und nach dem Verschieben identisch (alle
+952 Eintraege); `python -m pytest` 100 Tests gruen; `ruff check .` und
+`ruff format --check .` ohne Befund; das Wheel enthaelt
+`translations/__init__.py` und alle sieben Sprachmodule.
+
+**Dateien:** `translations/` (neu), `translations.py` (entfernt),
+`pyproject.toml`, `tests/test_i18n.py`, `README.md`
+
+---
+
+### V-042 – GUI-Initialisierung in `_build_*`-Methoden zerlegt
+
+Der 346-Zeilen-`__init__` von `App` hat Variablen, Fenster, Widgets und
+Startlogik vermischt. Jetzt ist er eine kurze Abfolge; der UI-Aufbau steckt in
+`_build_*`-Methoden.
+
+- `_init_vars()`, `_init_window()` und `_build_ui()` als klare Phasen.
+- `_build_ui()` ruft `_build_language_bar()`, `_build_sources_column()`,
+  `_build_options_column()`, `_build_separator()`, `_build_log_panel()` und
+  `_build_status_bar()` auf.
+- Quelle 1 und 2 teilen sich jetzt `_build_source_block()`; vorher war der
+  Block fast identisch dupliziert.
+- Zielblock, Start/Stop-Buttons und Fortschrittsbalken sind eigene Methoden.
+- Die Widget-Namen (`q1_entry`, `btn_w1`, `filter1_entry`, `txt`, `nb`, …)
+  bleiben unveraendert, damit `_apply_language`, `_on_dedup_toggle` und die
+  GUI-Tests weiter funktionieren.
+
+**Altlasten-Audit (Changelog):**
+- `_on_mode_change()` und `modus_var` waren nur noch geschrieben, nie gelesen –
+  entfernt (Rest der frueheren Modus-Radio-Buttons).
+- In den aktuellen Abschnitten des Changelogs standen noch `_Duplikate`-
+  Referenzen; sie heissen jetzt `Duplicates`.
+- Die doppelten, veralteten `_Duplikate`-Bullets unter „Offene Punkte" sind
+  entfernt.
+- `_Duplikate` bleibt nur dort absichtlich erhalten, wo die
+  Abwaertskompatibilitaet es braucht (`DUPES_FOLDER_ALTE`, Test in
+  `test_scan.py`).
+
+**Geprueft:** 100 Tests gruen; `ruff check .` und `ruff format --check .` ohne
+Befund.
+
+**Dateien:** `gui.py`, `CHANGELOG.md`
+
+---
+
 ## Verhalten im Detail
 
 ### Umbenennen und Verschieben
@@ -679,8 +872,8 @@ Ausgangslage: `IMG_1.jpg` und `IMG_2.jpg` liegen im Quellordner, `IMG.jpg` fehlt
 | Ort | Datei | Aktion |
 |---|---|---|
 | Quellordner | `IMG.jpg` | durch **Umbenennen** aus `IMG_1.jpg` – bleibt liegen |
-| `_Duplikate` | `IMG_2.jpg` | **verschoben** |
-| `_Duplikate` | `IMG.jpg` | **Kopie** des Keepers (einmal pro Gruppe) |
+| `Duplicates` | `IMG_2.jpg` | **verschoben** |
+| `Duplicates` | `IMG.jpg` | **Kopie** des Keepers (einmal pro Gruppe) |
 
 ### Einzelne Datei ohne Basisdatei
 
@@ -689,7 +882,7 @@ Ausgangslage: nur `IMG_1.jpg` liegt im Quellordner.
 | Ort | Datei | Aktion |
 |---|---|---|
 | Quellordner | `IMG.jpg` | durch **Umbenennen** aus `IMG_1.jpg` |
-| `_Duplikate` | – | keine Kopie (keine Duplikat-Schleife) |
+| `Duplicates` | – | keine Kopie (keine Duplikat-Schleife) |
 
 ---
 
@@ -772,8 +965,5 @@ Weiterhin offen:
 - **Tk-Tabs lassen sich nicht ausgrauen *und* Klicks melden.** Deshalb zeigt der
   gesperrte Tab „Bereinigen (gesperrt)" und erklaert beim Klick den Grund,
   statt wirklich deaktiviert zu sein.
-- **Papierkorb statt endgültigem Löschen** – bewusst nicht umgesetzt: es wird
-  grundsätzlich nichts gelöscht, Duplikate wandern nach `_Duplikate` (V-009).
-- **Endgültiges Löschen von `_Duplikate`** – bleibt bewusst manuell.
 - **Log-/Reporttexte der Worker** sind inzwischen übersetzt; die Dateinamen
   darin (`_log.txt`, `_index.txt`) bleiben fest.
