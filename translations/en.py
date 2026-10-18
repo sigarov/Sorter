@@ -33,7 +33,6 @@ EN = {
     "chk_dryrun": "Dry run (no files are copied or moved – simulation only)",
     "chk_skip_existing": "Skip existing files (do not create _1, _2)",
     "hint_skip_existing": "Skip existing files (do not create _1, _2) is intended for identical backups saved with different timestamps: instead of creating a _1 file, the existing target file is kept and the source file is skipped. This saves time on duplicate sorting and on the manual check afterwards.",
-    "chk_dedup": "In-place cleanup: move identical _1, _2 copies to 'Duplicates'",
     "chk_dedup_force": "Extend: also move _1, _2 files with differing content to 'Duplicates'",
     "hint_dedup_force": "This rule covers two cases: (1) the same pictures were backed up at different times - the sorter sees two different pictures with the same name and appends _1, _2. (2) Pictures from two different cameras happen to share the same name and also get _1, _2. In both cases the file content does not decide - you do, in the 'Duplicates' folder.",
     "lbl_dedup_extra": "Additional rule:",

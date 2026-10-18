@@ -31,4 +31,28 @@ jobs:
           ruff format --check .
 
       - name: Tests (pytest)
-        run: python -m pytest -q
+        run: python -m pytest -q --cov --cov-report=term-missing
+
+  test-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System-Python, Tk und Xvfb installieren
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip python3-tk xvfb
+
+      - name: Abhaengigkeiten installieren
+        run: |
+          python3 -m pip install --break-system-packages --upgrade pip
+          python3 -m pip install --break-system-packages -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: |
+          python3 -m ruff check .
+          python3 -m ruff format --check .
+
+      - name: Tests (pytest)
+        run: xvfb-run -a python3 -m pytest -q

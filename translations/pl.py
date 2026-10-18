@@ -33,7 +33,6 @@ PL = {
     "chk_dryrun": "Próba na sucho (nic nie jest kopiowane ani przenoszone – tylko symulacja)",
     "chk_skip_existing": "Pomiń istniejące pliki (nie twórz _1, _2)",
     "hint_skip_existing": "Pomiń istniejące pliki (nie twórz _1, _2) jest przeznaczone dla identycznych kopii zapasowych zapisanych z różnymi znacznikami czasu: zamiast tworzyć plik _1, istniejący plik docelowy zostaje zachowany, a plik źródłowy jest pomijany. Oszczędza to czas przy sortowaniu duplikatów i późniejszej kontroli ręcznej.",
-    "chk_dedup": "Czyszczenie w miejscu: przenieś identyczne kopie _1, _2 do 'Duplicates'",
     "chk_dedup_force": "Rozszerz: także przenieś pliki _1, _2 o odmiennej zawartości do 'Duplicates'",
     "hint_dedup_force": "Ta reguła obejmuje dwa przypadki: (1) te same zdjęcia zostały zapisane w różnych momentach - sorter widzi w nich dwa różne obrazy o tej samej nazwie i dodaje _1, _2. (2) Zdjęcia z dwóch różnych aparatów przypadkowo mają tę samą nazwę i również otrzymują _1, _2. W obu przypadkach nie decyduje zawartość pliku, lecz ty sam w folderze 'Duplicates'.",
     "lbl_dedup_extra": "Dodatkowa reguła:",

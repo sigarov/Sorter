@@ -33,7 +33,6 @@ TR = {
     "chk_dryrun": "Deneme çalıştırması (hiçbir dosya kopyalanmaz veya taşınmaz – yalnızca simülasyon)",
     "chk_skip_existing": "Mevcut dosyaları atla (_1, _2 oluşturma)",
     "hint_skip_existing": "Mevcut dosyaları atla (_1, _2 oluşturma), farklı zaman damgalarıyla kaydedilmiş aynı yedekler için tasarlanmıştır: _1 dosyası oluşturmak yerine mevcut hedef dosya korunur ve kaynak dosya atlanır. Bu, kopya sıralamasında ve sonraki manuel kontrolde zaman kazandırır.",
-    "chk_dedup": "Yerinde temizleme: aynı _1, _2 kopyalarını 'Duplicates' klasörüne taşı",
     "chk_dedup_force": "Genişlet: farklı içerikli _1, _2 dosyalarını da 'Duplicates' klasörüne taşı",
     "hint_dedup_force": "Bu kural iki durum için tasarlanmıştır: (1) aynı fotoğraflar farklı zamanlarda yedeklendi - sıralayıcı bunları aynı ada sahip iki farklı resim olarak görür ve _1, _2 ekler. (2) İki farklı kameranın fotoğrafları tesadüfen aynı ada sahip olur ve yine _1, _2 alır. Her iki durumda da dosya içeriği değil, 'Duplicates' klasöründe sen karar verirsin.",
     "lbl_dedup_extra": "Ek kural:",

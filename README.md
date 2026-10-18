@@ -51,9 +51,13 @@ liegt) oder aus dem Dateinamen.
 ```powershell
 pip install -r requirements-dev.txt
 python -m pytest
+python -m pytest --cov --cov-report=term-missing
 ruff check .
 ruff format --check .
 ```
+
+Der GUI-Smoke-Test baut die komplette Tk-Oberflaeche einmal auf. Unter Linux
+braucht er ein Display, in CI laeuft er deshalb ueber `xvfb-run`.
 
 Die Uebersetzungen liegen pro Sprache in `translations/` (`de.py`, `en.py`, ...).
 `translations/__init__.py` buendelt sie nur noch zu `TRANSLATIONS`; Textaenderungen

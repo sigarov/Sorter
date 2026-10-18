@@ -33,7 +33,6 @@ ES = {
     "chk_dryrun": "Simulación (no se copia ni mueve ningún archivo – solo simulación)",
     "chk_skip_existing": "Omitir archivos existentes (no crear _1, _2)",
     "hint_skip_existing": "Omitir archivos existentes (no crear _1, _2) está pensado para copias de seguridad idénticas guardadas con marcas de tiempo diferentes: en lugar de crear un archivo _1, se conserva el archivo de destino existente y se omite el archivo de origen. Así se ahorra tiempo en la clasificación de duplicados y en la revisión manual posterior.",
-    "chk_dedup": "Limpieza in situ: mover las copias _1, _2 idénticas a 'Duplicates'",
     "chk_dedup_force": "Ampliar: también mover archivos _1, _2 con contenido diferente a 'Duplicates'",
     "hint_dedup_force": "Esta regla cubre dos casos: (1) las mismas fotos se guardaron en momentos distintos - el clasificador ve dos imágenes diferentes con el mismo nombre y añade _1, _2. (2) Fotos de dos cámaras distintas coinciden por casualidad en el nombre y también reciben _1, _2. En ambos casos no decide el contenido del archivo, sino tú, en la carpeta 'Duplicates'.",
     "lbl_dedup_extra": "Regla adicional:",

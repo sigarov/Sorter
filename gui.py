@@ -266,10 +266,15 @@ class App(tk.Tk):
         # ================= RECHTE SPALTE: Optionen in Gruppen =================
         right_col = tk.Frame(fr_main)
         right_col.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        self._build_general_group(right_col)
+        self._build_mode_tabs(right_col)
+        self._build_dedup_group(self.tab_dedup)
+        self._build_naming_group(self.tab_sort)
 
-        # --- Gruppe 1: Allgemein ---
+    def _build_general_group(self, parent):
+        """Gruppe "Allgemein" mit Trockenlauf und Ueberspringen."""
         self.grp_general = tk.LabelFrame(
-            right_col, text="", bd=3, relief="ridge", padx=8, pady=4, font=("", 9, "bold")
+            parent, text="", bd=3, relief="ridge", padx=8, pady=4, font=("", 9, "bold")
         )
         self.grp_general.pack(fill="x", pady=(0, 8))
         self._help_button(self.grp_general, "general")
@@ -280,8 +285,9 @@ class App(tk.Tk):
         self.chk_skip = ttk.Checkbutton(self.grp_general, variable=self.skip_existing, text="")
         self.chk_skip.pack(anchor="w")
 
-        # --- Tabs: modus-spezifische Optionen ---
-        self.nb = ttk.Notebook(right_col)
+    def _build_mode_tabs(self, parent):
+        """Notebook mit den Tabs "Sortieren" und "Bereinigen"."""
+        self.nb = ttk.Notebook(parent)
         self.nb.pack(fill="both", expand=True)
         self.tab_sort = tk.Frame(self.nb)
         self.tab_dedup = tk.Frame(self.nb)
@@ -289,14 +295,13 @@ class App(tk.Tk):
         self.nb.add(self.tab_dedup, text="")
         self.nb.bind("<<NotebookTabChanged>>", self._on_tab_change)
 
-        # --- Gruppe 2: Deduplizierung (Tab "Bereinigen") ---
+    def _build_dedup_group(self, parent):
+        """Dedup-Optionen im Tab "Bereinigen" (Modus wird ueber den Tab gewaehlt)."""
         self.grp_dedup = tk.LabelFrame(
-            self.tab_dedup, text="", bd=3, relief="ridge", padx=8, pady=4, font=("", 9, "bold")
+            parent, text="", bd=3, relief="ridge", padx=8, pady=4, font=("", 9, "bold")
         )
         self.grp_dedup.pack(fill="both", expand=True, padx=2, pady=2)
         self._help_button(self.grp_dedup, "dedup")
-
-        self.chk_dedup = ttk.Checkbutton(self.grp_dedup, variable=self.dedup, text="")
 
         # Trennlinie zur naechsten Regel (Force)
         ttk.Separator(self.grp_dedup, orient="horizontal").pack(fill="x", pady=(8, 6))
@@ -315,9 +320,10 @@ class App(tk.Tk):
         )
         self._text_widgets["lbl_dedup_hint"].pack(anchor="w", pady=(2, 0))
 
-        # --- Gruppe 3: Sortierung & Namen (Tab "Sortieren") ---
+    def _build_naming_group(self, parent):
+        """Optionen fuer Sortierung und Namen im Tab "Sortieren"."""
         self.grp_naming = tk.LabelFrame(
-            self.tab_sort, text="", bd=3, relief="ridge", padx=8, pady=4, font=("", 9, "bold")
+            parent, text="", bd=3, relief="ridge", padx=8, pady=4, font=("", 9, "bold")
         )
         self.grp_naming.pack(fill="both", expand=True, padx=2, pady=2)
         self._help_button(self.grp_naming, "naming")
@@ -434,22 +440,38 @@ class App(tk.Tk):
         self._apply_language()
 
     def _apply_language(self):
+        self.title(self.lang.get("window_title", WINDOW_TITLE))
+        self._apply_language_groups()
+        self._apply_language_header()
+        self._apply_language_sources()
+        self._apply_language_options()
+        self._apply_language_tabs()
+        self._apply_language_log()
+        self._refresh_progress_labels()
+
+    def _apply_language_groups(self):
         L = self.lang
-        self.title(L.get("window_title", WINDOW_TITLE))
+        self.grp_general.config(text=L.get("lbl_group_general", "General"))
+        self.grp_dedup.config(text=L.get("lbl_group_dedup", "Deduplication"))
+        self.grp_naming.config(text=L.get("lbl_group_naming", "Sorting & Names"))
 
-        if hasattr(self, "grp_general"):
-            self.grp_general.config(text=L.get("lbl_group_general", "General"))
-            self.grp_dedup.config(text=L.get("lbl_group_dedup", "Deduplication"))
-            self.grp_naming.config(text=L.get("lbl_group_naming", "Sorting & Names"))
-
+    def _apply_language_header(self):
+        L = self.lang
         self._text_widgets["lbl_lang"].config(text=L["lang_label"])
         self.lang_display.set(L["name"])
 
+    def _update_source_labels(self):
+        """Quell- und Zielbeschriftungen passend zum aktiven Modus setzen."""
+        L = self.lang
         self._text_widgets["lbl_source1"].config(text=L["lbl_source1"])
         self._text_widgets["lbl_source2"].config(text=L["lbl_source2"])
         self._text_widgets["lbl_target"].config(
             text=L.get("lbl_target_dedup", L["lbl_target"]) if self.dedup.get() else L["lbl_target"]
         )
+
+    def _apply_language_sources(self):
+        L = self.lang
+        self._update_source_labels()
         self._text_widgets["lbl_filter1"].config(text=L["lbl_filter_short"])
         self._text_widgets["lbl_filter2"].config(text=L["lbl_filter_short"])
         self._text_widgets["lbl_filter_hint1"].config(text=L["lbl_filter_hint"])
@@ -459,14 +481,14 @@ class App(tk.Tk):
         self.btn_w2.config(text=L["btn_choose"])
         self.btn_w3.config(text=L["btn_choose"])
 
+    def _apply_language_options(self):
+        L = self.lang
         self.chk_dry.config(text=L["chk_dryrun"])
         self.chk_skip.config(text=L["chk_skip_existing"])
-        self.chk_dedup.config(text=L["chk_dedup"])
         self.chk_dedup_force.config(text=L.get("chk_dedup_force", ""))
-        if "lbl_dedup_extra" in self._text_widgets:
-            self._text_widgets["lbl_dedup_extra"].config(
-                text=L.get("lbl_dedup_extra", "Additional rule:")
-            )
+        self._text_widgets["lbl_dedup_extra"].config(
+            text=L.get("lbl_dedup_extra", "Additional rule:")
+        )
         self._update_dedup_hint()
 
         self._text_widgets["lbl_structure"].config(text=L["lbl_structure"])
@@ -496,21 +518,20 @@ class App(tk.Tk):
                 self.naming_label.set(L[tr_key])
                 break
 
+    def _apply_language_tabs(self):
+        L = self.lang
+        self.nb.tab(0, text=L.get("mode_sort", "Sortieren"))
+        self._setze_tab_titel(self._dedup_freigabe())
+
+    def _apply_language_log(self):
+        L = self.lang
         self._text_widgets["lbl_log"].config(text=L["lbl_log"])
-
-        if hasattr(self, "nb"):
-            self.nb.tab(0, text=L.get("mode_sort", "Sortieren"))
-            self._setze_tab_titel(self._dedup_freigabe())
-        if hasattr(self, "btn_log_clear"):
-            self.btn_log_clear.config(text=L.get("btn_log_clear", "Leeren"))
-            self.btn_log_save.config(text=L.get("btn_log_save", "Speichern"))
-            self.btn_log_open.config(text=L.get("btn_log_open", "Oeffnen"))
-            self.chk_log_errors.config(text=L.get("chk_log_errors", "Nur Fehler"))
-            self.chk_log_autoscroll.config(text=L.get("chk_log_autoscroll", "Auto-Scroll"))
-        if "lbl_log_search" in self._text_widgets:
-            self._text_widgets["lbl_log_search"].config(text=L.get("lbl_log_search", "Suchen:"))
-
-        self._refresh_progress_labels()
+        self.btn_log_clear.config(text=L.get("btn_log_clear", "Leeren"))
+        self.btn_log_save.config(text=L.get("btn_log_save", "Speichern"))
+        self.btn_log_open.config(text=L.get("btn_log_open", "Oeffnen"))
+        self.chk_log_errors.config(text=L.get("chk_log_errors", "Nur Fehler"))
+        self.chk_log_autoscroll.config(text=L.get("chk_log_autoscroll", "Auto-Scroll"))
+        self._text_widgets["lbl_log_search"].config(text=L.get("lbl_log_search", "Suchen:"))
 
     def _on_naming_change(self, event=None):
         label = self.naming_label.get()
@@ -542,6 +563,15 @@ class App(tk.Tk):
             return
         self._text_widgets["lbl_dedup_hint"].config(text=self.lang.get("hint_dedup_move", ""))
 
+    @staticmethod
+    def _set_widget_state(widgets, state):
+        """Setzt den Zustand mehrerer Widgets und ignoriert bereits zerstoerte."""
+        for widget in widgets:
+            try:
+                widget.config(state=state)
+            except tk.TclError:
+                pass
+
     def _on_dedup_toggle(self):
         self._sync_tab()
         dedup = self.dedup.get()
@@ -549,42 +579,23 @@ class App(tk.Tk):
         # Dedup laeuft im **Zielordner**: dort liegen die _1, _2-Dateien aus dem
         # Sortierlauf. Deshalb sind im Dedup-Modus nur die Ziel-Felder aktiv und
         # Quellen samt Filtern gesperrt.
-        quellen_state = "disabled" if dedup else "normal"
-        for w in (
-            self.q1_entry,
-            self.q2_entry,
-            self.filter1_entry,
-            self.filter2_entry,
-            self.btn_w1,
-            self.btn_w2,
-        ):
-            try:
-                w.config(state=quellen_state)
-            except tk.TclError:
-                pass
-        for w in (self.ziel_entry, self.btn_w3):
-            try:
-                w.config(state="normal")
-            except tk.TclError:
-                pass
+        self._set_widget_state(
+            (
+                self.q1_entry,
+                self.q2_entry,
+                self.filter1_entry,
+                self.filter2_entry,
+                self.btn_w1,
+                self.btn_w2,
+            ),
+            "disabled" if dedup else "normal",
+        )
+        self._set_widget_state((self.ziel_entry, self.btn_w3), "normal")
 
         # Force-Checkbox nur bei aktivem Dedup klickbar
-        d_state = "normal" if dedup else "disabled"
-        for wname in ("chk_dedup_force",):
-            w = getattr(self, wname, None)
-            if w is not None:
-                try:
-                    w.config(state=d_state)
-                except tk.TclError:
-                    pass
+        self._set_widget_state((self.chk_dedup_force,), "normal" if dedup else "disabled")
         self._update_dedup_hint()
-
-        L = self.lang
-        self._text_widgets["lbl_source1"].config(text=L["lbl_source1"])
-        self._text_widgets["lbl_source2"].config(text=L["lbl_source2"])
-        self._text_widgets["lbl_target"].config(
-            text=L.get("lbl_target_dedup", L["lbl_target"]) if dedup else L["lbl_target"]
-        )
+        self._update_source_labels()
 
     # ---------- Hilfe (?-Buttons) ----------
     def _help_button(self, parent, section):
@@ -635,6 +646,7 @@ class App(tk.Tk):
                 L.get("hint_dedup_locked", ""),
             )
             return
+        self._setze_tab_titel(True)
         if self.dedup.get() != new_dedup:
             self.dedup.set(new_dedup)
             self._on_dedup_toggle()
@@ -1034,15 +1046,6 @@ class App(tk.Tk):
     def _aktualisiere_dedup_freigabe(self):
         """Sperrt den Dedup-Modus, solange im Ziel noch nicht sortiert wurde."""
         frei = self._dedup_freigabe()
-
-        # Direkt aus dem Namensraum lesen: getattr() wuerde bei einem
-        # Tk-Objekt ohne Fenster (Tests) in eine Rekursion laufen.
-        chk = self.__dict__.get("chk_dedup")
-        if chk is not None:
-            try:
-                chk.config(state="normal" if frei else "disabled")
-            except tk.TclError:
-                pass
 
         if not frei and self.__dict__.get("dedup") is not None and self.dedup.get():
             # Modus zuruecknehmen, sonst bliebe der gesperrte Tab aktiv.

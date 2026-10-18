@@ -33,7 +33,6 @@ FR = {
     "chk_dryrun": "Essai à blanc (aucun fichier copié ou déplacé – simulation uniquement)",
     "chk_skip_existing": "Ignorer les fichiers existants (ne pas créer _1, _2)",
     "hint_skip_existing": "Ignorer les fichiers existants (ne pas créer _1, _2) est prévu pour des sauvegardes identiques enregistrées avec des horodatages différents : au lieu de créer un fichier _1, le fichier cible existant est conservé et le fichier source est ignoré. Cela fait gagner du temps lors du tri des doublons et du contrôle manuel qui suit.",
-    "chk_dedup": "Nettoyage sur place : déplacer les copies _1, _2 identiques vers 'Duplicates'",
     "chk_dedup_force": "Étendre : aussi déplacer les fichiers _1, _2 au contenu différent vers 'Duplicates'",
     "hint_dedup_force": "Cette règle couvre deux cas : (1) les mêmes photos ont été sauvegardées à des moments différents - le trieur y voit deux images différentes portant le même nom et ajoute _1, _2. (2) Des photos de deux appareils différents portent par hasard le même nom et reçoivent aussi _1, _2. Dans les deux cas, ce n'est pas le contenu du fichier qui décide, mais toi, dans le dossier 'Duplicates'.",
     "lbl_dedup_extra": "Règle supplémentaire :",

@@ -33,7 +33,6 @@ DE = {
     "chk_dryrun": "Trockenlauf (nichts wird kopiert oder verschoben – nur simulieren)",
     "chk_skip_existing": "Vorhandene Dateien überspringen (keine _1, _2 anlegen)",
     "hint_skip_existing": "Vorhandene Dateien überspringen (keine _1, _2 anlegen) ist für gleiche Sicherungen gedacht, die mit unterschiedlichen Zeitstempeln abgelegt wurden: Statt eine _1-Datei anzulegen, bleibt die vorhandene Zieldatei erhalten und die Quelldatei wird übersprungen. Das spart Zeit bei der Duplikat-Sortierung und bei der manuellen Kontrolle danach.",
-    "chk_dedup": "In-Place-Bereinigung: identische _1, _2-Kopien nach 'Duplicates' verschieben",
     "chk_dedup_force": "Erweitern: auch _1, _2-Dateien mit abweichendem Inhalt nach 'Duplicates' verschieben",
     "hint_dedup_force": "Diese Regel ist für zwei Fälle gedacht: (1) Dieselben Bilder wurden zu verschiedenen Zeiten gesichert - der Sortierer sieht darin zwei verschiedene Bilder mit gleichem Namen und hängt _1, _2 an. (2) Bilder aus zwei verschiedenen Kameras tragen zufällig denselben Namen und bekommen ebenfalls _1, _2. In beiden Fällen entscheidet nicht der Dateiinhalt, sondern du selbst im Ordner 'Duplicates'.",
     "lbl_dedup_extra": "Zusätzliche Regel:",

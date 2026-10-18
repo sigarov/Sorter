@@ -50,6 +50,7 @@ sortiert (V-001 oben, neuester Eintrag unten).
 | V-040 | 2026-10-18 | Übersetzungen nach Sprachen aufgeteilt (`i18n/`) | `translations.py`, `i18n/` (neu), `pyproject.toml`, `tests/test_i18n.py` |
 | V-041 | 2026-10-18 | Sprachdateien in das Package `translations/` verschoben | `translations/` (neu), `translations.py` (entfernt), `pyproject.toml`, `tests/test_i18n.py`, `README.md` |
 | V-042 | 2026-10-18 | GUI-Initialisierung in `_build_*`-Methoden zerlegt, Altlasten entfernt | `gui.py`, `CHANGELOG.md` |
+| V-043 | 2026-10-18 | GUI weiter aufgeteilt, Smoke-Test, Coverage/Linux-CI, Dedup nur noch ueber den Tab | `gui.py`, `translations/*.py`, `tests/test_gui_smoke.py` (neu), `requirements-dev.txt`, `pyproject.toml`, `.github/workflows/ci.yml`, `README.md`, `CHANGELOG.md` |
 
 ---
 
@@ -863,6 +864,52 @@ Befund.
 
 ---
 
+### V-043 – GUI-Feinschliff, Smoke-Test und einheitlicher Dedup-Schalter
+
+V-042 hatte den UI-Aufbau in `_build_*`-Methoden zerlegt. V-043 zieht die noch
+grossen Methoden nach, sichert den echten GUI-Aufbau mit einem Test ab und
+beseitigt den doppelten Dedup-Schalter.
+
+**1. GUI weiter aufgeteilt**
+- `_build_options_column()` ruft jetzt `_build_general_group()`,
+  `_build_mode_tabs()`, `_build_dedup_group()` und `_build_naming_group()` auf.
+- `_apply_language()` ist in `_apply_language_groups()`,
+  `_apply_language_header()`, `_apply_language_sources()`,
+  `_apply_language_options()`, `_apply_language_tabs()` und
+  `_apply_language_log()` zerlegt.
+- `_update_source_labels()` ist die einzige Stelle fuer Quell-/Zieltexte und
+  wird von `_apply_language_sources()` und `_on_dedup_toggle()` genutzt.
+- `_set_widget_state()` ersetzt die wiederholten `try/except tk.TclError`-
+  Schleifen; die Ein-Element-Schleife fuer die Force-Checkbox ist entfallen.
+- Die `hasattr`-Absicherungen in `_apply_language()` sind entfernt, weil die
+  Methode erst nach `_build_ui()` laeuft.
+
+**2. Dedup nur noch ueber den Tab**
+- Die Checkbox `chk_dedup` ist entfernt; der Tab „Bereinigen" ist der einzige
+  Modusschalter. `self.dedup` bleibt als interner Zustand erhalten.
+- Der Uebersetzungs-Key `chk_dedup` ist aus allen sieben Sprachdateien
+  entfernt; `chk_dedup_force` bleibt unveraendert.
+- `_aktualisiere_dedup_freigabe()` muss dadurch kein Widget mehr sperren und
+  setzt nur noch Modus und Tab-Titel.
+
+**3. Tests und CI**
+- `tests/test_gui_smoke.py` (neu) baut die echte `App` auf und prueft Widgets,
+  Sprachwechsel, Dedup-Sperre und das Sperren der Quellen im Dedup-Modus.
+  Ohne Display wird der Test uebersprungen.
+- `pytest-cov` ist in `requirements-dev.txt`; Coverage-Konfiguration liegt in
+  `pyproject.toml`.
+- CI: Windows-Job misst Coverage; neuer Linux-Job (Python 3.12) fuehrt Lint und
+  Tests unter `xvfb-run` aus.
+
+**Geprueft:** 105 Tests gruen; `ruff check .` und `ruff format --check .` ohne
+Befund; GUI-Smoke-Test baut die Oberflaeche erfolgreich auf.
+
+**Dateien:** `gui.py`, `translations/*.py`, `tests/test_gui_smoke.py` (neu),
+`requirements-dev.txt`, `pyproject.toml`, `.github/workflows/ci.yml`,
+`README.md`, `CHANGELOG.md`
+
+---
+
 ## Verhalten im Detail
 
 ### Umbenennen und Verschieben
@@ -941,6 +988,38 @@ Ausgangslage: nur `IMG_1.jpg` liegt im Quellordner.
 
 ---
 
+## Verifikation (Stand 2026-10-18)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `python -m pytest` | 105 Tests, alle grün |
+| `ruff check .` | All checks passed |
+| `ruff format --check .` | alle Dateien formatiert |
+| GUI-Smoke-Test | echte `App` aufgebaut, alle Widgets vorhanden |
+| CI | Windows (3.9/3.12) mit Coverage, Linux (3.12) mit `xvfb-run` |
+
+**Testverteilung**
+
+| Testdatei | Tests |
+|---|---|
+| `test_gui_start.py` | 22 |
+| `test_utils.py` | 16 |
+| `test_sorter_run.py` | 12 |
+| `test_scan.py` | 7 |
+| `test_naming.py` | 7 |
+| `test_i18n.py` | 7 |
+| `test_index_cache.py` | 7 |
+| `test_gui_paths.py` | 6 |
+| `test_dedup_run.py` | 5 |
+| `test_dedup.py` | 4 |
+| `test_gui_ziel.py` | 4 |
+| `test_gui_smoke.py` | 5 |
+| `test_gui_log.py` | 2 |
+| `test_translation_usage.py` | 1 |
+| **gesamt** | **105** |
+
+---
+
 ## Offene Punkte (noch nicht umgesetzt)
 
 Aus der ursprünglichen Liste sind inzwischen erledigt:
@@ -952,13 +1031,11 @@ Aus der ursprünglichen Liste sind inzwischen erledigt:
   → Duplikate werden auch im Trockenlauf erkannt (Eintrag in `known`)
 - ~~`exif_datum()` schließt das Bild nicht~~ → nutzt `with Image.open(...)`
 - ~~Warnung/Bestätigung für den Force-Modus~~ → umgesetzt (V-032)
+- ~~Doppelter Schalter für den Dedup-Modus~~ → umgesetzt (V-043): der Tab
+  „Bereinigen" ist der einzige Modusschalter, die Checkbox ist entfernt
 
 Weiterhin offen:
 
-- **Doppelter Schalter fuer den Dedup-Modus.** Es gibt weiterhin den Haken
-  `chk_dedup` **und** den Tab „Bereinigen". Beide werden jetzt synchron
-  gesperrt/freigegeben, aber sinnvoll waere, sich auf einen festzulegen
-  (bewusst zurueckgestellt).
 - **Papierkorb statt endgültigem Löschen** – bewusst nicht umgesetzt: es wird
   grundsätzlich nichts gelöscht, Duplikate wandern nach `Duplicates` (V-009).
 - **Endgültiges Löschen von `Duplicates`** – bleibt bewusst manuell.
