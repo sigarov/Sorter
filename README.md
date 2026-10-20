@@ -50,6 +50,7 @@ python main.py
 Im Repository liegen zwei Skripte, um eigene ausführbare Dateien zu erstellen:
 
 · Windows (.exe): Führe build_windows.bat aus. Dies erstellt eine .exe-Datei im dist-Ordner.
+
 · Linux (.AppImage): Führe build_linux_appimage.sh aus. Dies erstellt eine portable .AppImage-Datei. 
   (Hinweis: Unter Linux werden dafür Pakete wie python3-venv, binutils und das appimagetool benötigt, die das Skript größtenteils automatisch herunterlädt).
 
