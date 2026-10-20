@@ -45,7 +45,7 @@ Wenn du Python installiert hast, kannst du das Programm direkt starten:
 python main.py
 ```
 
-##Eigene Versionen erstellen (Build)
+## Eigene Versionen erstellen (Build)
 
 Im Repository liegen zwei Skripte, um eigene ausführbare Dateien zu erstellen:
 
