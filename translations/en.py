@@ -4,6 +4,7 @@ EN = {
     "name": "English",
     "window_title": "Pictures and Video Sorter",
     "dlg_help_title": "Help",
+    "btn_help": "Help",
     "confirm_force_title": "Force mode",
     "confirm_force_msg": "Attention: the extended rule also moves _1, _2 files with differing content to 'Duplicates'. The content is not compared. Continue?",
     "confirm_cancel_title": "Cancel",

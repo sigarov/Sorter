@@ -4,6 +4,7 @@ DE = {
     "name": "Deutsch",
     "window_title": "Medien-Sortierer",
     "dlg_help_title": "Hilfe",
+    "btn_help": "Hilfe",
     "confirm_force_title": "Force-Modus",
     "confirm_force_msg": "Achtung: Die erweiterte Regel verschiebt auch _1, _2-Dateien mit abweichendem Inhalt nach 'Duplicates'. Der Inhalt wird nicht verglichen. Fortfahren?",
     "confirm_cancel_title": "Abbrechen",

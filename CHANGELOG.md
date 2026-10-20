@@ -51,6 +51,9 @@ sortiert (V-001 oben, neuester Eintrag unten).
 | V-041 | 2026-10-18 | Sprachdateien in das Package `translations/` verschoben | `translations/` (neu), `translations.py` (entfernt), `pyproject.toml`, `tests/test_i18n.py`, `README.md` |
 | V-042 | 2026-10-18 | GUI-Initialisierung in `_build_*`-Methoden zerlegt, Altlasten entfernt | `gui.py`, `CHANGELOG.md` |
 | V-043 | 2026-10-18 | GUI weiter aufgeteilt, Smoke-Test, Coverage/Linux-CI, Dedup nur noch ueber den Tab | `gui.py`, `translations/*.py`, `tests/test_gui_smoke.py` (neu), `requirements-dev.txt`, `pyproject.toml`, `.github/workflows/ci.yml`, `README.md`, `CHANGELOG.md` |
+| V-044 | 2026-10-20 | Handbuch (Bedienungsanleitung) mit Hilfe-Button und F1, vorerst auf Deutsch | `manual/de.py` (neu), `manual/__init__.py` (neu), `gui.py`, `translations/*.py`, `pyproject.toml`, `tests/test_manual.py` (neu), `tests/test_gui_smoke.py`, `README.md`, `CHANGELOG.md` |
+| V-045 | 2026-10-20 | Handbuch in die restlichen sechs Sprachen uebersetzt | `manual/{en,ru,fr,es,pl,tr}.py` (neu), `manual/__init__.py`, `translations/*.py`, `tests/test_manual.py`, `README.md`, `CHANGELOG.md` |
+| V-046 | 2026-10-20 | Hilfe-Dialog des Logs nutzt den übersetzten Protokoll-Titel | `gui.py`, `tests/test_gui_smoke.py`, `CHANGELOG.md` |
 
 ---
 
@@ -910,6 +913,100 @@ Befund; GUI-Smoke-Test baut die Oberflaeche erfolgreich auf.
 
 ---
 
+## 2026-10-20
+
+### V-044 – Handbuch mit Hilfe-Button und F1 (deutscher Master)
+
+Bisher gab es nur kurze `?`-Hinweise pro Gruppe. V-044 ergänzt eine
+vollständige Bedienungsanleitung in der App.
+
+**1. Handbuch-Package**
+- Neues Package `manual/` mit `manual/de.py` als Master. Jedes Kapitel ist ein
+  Dict mit `id`, `title` und `text`; die `id` ist sprachunabhängig.
+- `manual/__init__.py` bündelt `MANUALS`, liefert `get_manual()`,
+  `get_sections()` und `get_section()`. Noch nicht übersetzte Sprachen fallen
+  auf Deutsch zurück.
+- Bewusst **außerhalb** von `translations/`: Die langen Texte würden die
+  Key-Paritätstests aufblähen. `manual` ist in `pyproject.toml` als Package
+  eingetragen.
+
+**2. Zwölf Kapitel (deutsch)**
+Was das Programm macht · Erste Schritte · Sortieren und Ordnerstruktur ·
+Dateinamen · Struktur getrennt/zusammen · Ordner filtern · Trockenlauf und
+Index-Cache · Duplikate bereinigen · Vorhandene Dateien überspringen ·
+Log-Fenster · Einstellungen/Speicherort/Sprache · Tastenkürzel und
+Problemlösung.
+
+**3. GUI**
+- Neuer Button „Hilfe" oben rechts neben der Sprachauswahl (Key `btn_help` in
+  allen sieben Sprachdateien).
+- `F1` öffnet dasselbe Fenster (`_bind_shortcuts`).
+- Handbuch-Fenster: Kapitelliste links, scrollbarer Text rechts, `Esc` und
+  „Schließen" beenden es. Zuletzt gelesenes Kapitel wird gemerkt.
+- Sprachwechsel baut ein offenes Handbuch in der neuen Sprache neu auf.
+- Die bestehenden `?`-Buttons bleiben als kurze Kontext-Hilfe erhalten.
+
+**4. Tests**
+- `tests/test_manual.py` (neu): Kapitelreihenfolge, Titel/Text vorhanden,
+  Parität über alle vorhandenen Sprachen, kein rohes `{nodate}`, Fallback auf
+  Deutsch und unbekannte Kapitel-IDs.
+- `tests/test_gui_smoke.py` prüft zusätzlich Fensteraufbau, Kapitelsprung,
+  Sprachwechsel bei offenem Handbuch und die `F1`-Bindung.
+
+**Geprüft:** 117 Tests grün; `ruff check .` und `ruff format --check .` ohne
+Befund.
+
+**Dateien:** `manual/__init__.py` (neu), `manual/de.py` (neu), `gui.py`,
+`translations/*.py`, `pyproject.toml`, `tests/test_manual.py` (neu),
+`tests/test_gui_smoke.py`, `README.md`, `CHANGELOG.md`
+
+### V-045 – Handbuch in den restlichen sechs Sprachen
+
+Punkt 2 aus V-044 (die zwölf Kapitel) liegt jetzt in allen sieben
+Oberflächensprachen vor. Bisher zeigte das Handbuch außerhalb von Deutsch nur
+den deutschen Master.
+
+**1. Übersetzungen**
+- Neu: `manual/en.py`, `manual/ru.py`, `manual/fr.py`, `manual/es.py`,
+  `manual/pl.py`, `manual/tr.py` – jeweils vollständige Übersetzung aller zwölf
+  Kapitel mit denselben IDs und derselben Reihenfolge wie `manual/de.py`.
+- `manual/__init__.py`: `MANUALS` enthält alle sieben Sprachen; der Fallback auf
+  Deutsch bleibt nur für unbekannte Sprachcodes bestehen.
+- Technische Namen bleiben unverändert: `Pictures`, `Videos`, `_No_Date`,
+  `Duplicates`, `Sorted`, `_1`, `_2`, `_index.txt`, `_log.txt`, `_log_dry.txt`
+  und `_liste.txt` werden nicht übersetzt.
+- Nebenbei behoben: `rb_separate` enthielt in fünf Sprachdateien noch den
+  deutschen Rest „Bilder/Videos“ und ist jetzt übersetzt.
+
+**2. Tests und Doku**
+- `tests/test_manual.py`: neuer Test, dass `MANUALS` und `TRANSLATIONS` dieselben
+  Sprachcodes abdecken.
+- `README.md`: Handbuch-Sprachliste und Fallback-Verhalten aktualisiert.
+- Offene Punkte: Der Eintrag „Handbuch in den restlichen sechs Sprachen" ist
+  erledigt.
+
+**Geprüft:** 118 Tests grün; `ruff check .` und `ruff format --check .` ohne
+Befund.
+
+**Dateien:** `manual/en.py` (neu), `manual/ru.py` (neu), `manual/fr.py` (neu),
+`manual/es.py` (neu), `manual/pl.py` (neu), `manual/tr.py` (neu),
+`manual/__init__.py`, `translations/*.py`, `tests/test_manual.py`, `README.md`,
+`CHANGELOG.md`
+
+### V-046 – Log-Hilfe mit übersetztem Titel
+
+Der `?`-Button am Log baute seinen Fenstertitel bisher aus
+`lbl_group_log` – einen solchen Key gibt es nicht, daher stand dort immer nur
+der allgemeine Fallback „Hilfe". Der Titel kommt jetzt aus dem vorhandenen Key
+`lbl_log` (ohne Doppelpunkt), also „Protokoll", „Log", „Журнал", „Journal",
+„Registro", „Dziennik" bzw. „Kayıt". Ein Smoke-Test sichert den Titel ab.
+
+**Geprüft:** 119 Tests grün; `ruff check .` ohne Befund.
+
+**Dateien:** `gui.py`, `tests/test_gui_smoke.py`, `CHANGELOG.md`
+
+---
+
 ## Verhalten im Detail
 
 ### Umbenennen und Verschieben
@@ -1020,6 +1117,38 @@ Ausgangslage: nur `IMG_1.jpg` liegt im Quellordner.
 
 ---
 
+## Verifikation (Stand 2026-10-20)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `python -m pytest` | 119 Tests, alle grün |
+| `ruff check .` | All checks passed |
+| `ruff format --check .` | alle Dateien formatiert |
+| GUI-Smoke-Test | Handbuch-Fenster, Kapitelsprung, Sprachwechsel, `F1` und Log-Hilfetitel geprüft |
+
+**Testverteilung**
+
+| Testdatei | Tests |
+|---|---|
+| `test_gui_start.py` | 22 |
+| `test_utils.py` | 16 |
+| `test_sorter_run.py` | 12 |
+| `test_gui_smoke.py` | 10 |
+| `test_manual.py` | 9 |
+| `test_scan.py` | 7 |
+| `test_naming.py` | 7 |
+| `test_i18n.py` | 7 |
+| `test_index_cache.py` | 7 |
+| `test_gui_paths.py` | 6 |
+| `test_dedup_run.py` | 5 |
+| `test_dedup.py` | 4 |
+| `test_gui_ziel.py` | 4 |
+| `test_gui_log.py` | 2 |
+| `test_translation_usage.py` | 1 |
+| **gesamt** | **119** |
+
+---
+
 ## Offene Punkte (noch nicht umgesetzt)
 
 Aus der ursprünglichen Liste sind inzwischen erledigt:
@@ -1033,6 +1162,8 @@ Aus der ursprünglichen Liste sind inzwischen erledigt:
 - ~~Warnung/Bestätigung für den Force-Modus~~ → umgesetzt (V-032)
 - ~~Doppelter Schalter für den Dedup-Modus~~ → umgesetzt (V-043): der Tab
   „Bereinigen" ist der einzige Modusschalter, die Checkbox ist entfernt
+- ~~Handbuch in den restlichen sechs Sprachen~~ → umgesetzt (V-045): alle sieben
+  Oberflächensprachen liegen in `manual/` vor
 
 Weiterhin offen:
 

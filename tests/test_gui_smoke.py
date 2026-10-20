@@ -99,3 +99,50 @@ def test_tab_ist_der_einzige_dedup_schalter(app, tmp_path):
 
     assert app.dedup.get() is False
     assert app.q1_entry.cget("state") == "normal"
+
+
+def test_hilfe_fenster_zeigt_alle_kapitel(app):
+    app._open_manual()
+
+    assert app._manual_win is not None
+    assert app._manual_win.winfo_exists()
+    assert app._manual_toc.size() == len(gui.get_manual("de")["sections"])
+    assert app._manual_txt.cget("state") == "disabled"
+
+    app._close_manual()
+    assert app._manual_win is None
+
+
+def test_hilfe_springt_zum_gewaehlten_kapitel(app):
+    app._open_manual("dedup")
+
+    text = app._manual_txt.get("1.0", "end")
+    assert "Duplicates" in text
+    assert app._manual_txt.cget("state") == "disabled"
+
+
+def test_hilfe_bleibt_bei_sprachwechsel_offen(app):
+    app._open_manual()
+
+    app.lang_display.set(gui.TRANSLATIONS["en"]["name"])
+    app._on_lang_change()
+
+    assert app._manual_win is not None
+    assert app._manual_win.winfo_exists()
+    assert app.btn_help.cget("text") == gui.TRANSLATIONS["en"]["btn_help"]
+
+
+def test_f1_ist_gebunden(app):
+    assert app.bind("<F1>")
+
+
+def test_log_hilfe_nutzt_protokoll_titel(app, monkeypatch):
+    gesehen = {}
+    monkeypatch.setattr(
+        gui.messagebox, "showinfo", lambda titel, text: gesehen.update(titel=titel, text=text)
+    )
+
+    app._zeige_hilfe("log")
+
+    assert gesehen["titel"] == gui.TRANSLATIONS["de"]["lbl_log"].rstrip(": ")
+    assert gesehen["text"].strip()

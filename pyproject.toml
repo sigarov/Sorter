@@ -21,7 +21,7 @@ build-backend = "setuptools.build_meta"
 # scheitert die automatische Paket-Erkennung ("Multiple top-level modules"),
 # was "pip install .[exif]" unbrauchbar machte.
 [tool.setuptools]
-packages = ["translations"]
+packages = ["translations", "manual"]
 py-modules = [
     "config",
     "dedup_sorter",

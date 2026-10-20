@@ -21,7 +21,9 @@ Tkinter-Tool zum Sortieren und Entdoppeln von Bildern und Videos.
   echten Lauf.
 - **Mehrsprachig:** Englisch, Deutsch, Russisch, Franzoesisch, Spanisch,
   Polnisch, Tuerkisch.
-
+- **Handbuch:** Button „Hilfe“ oben rechts (oder `F1`) oeffnet eine
+  Bedienungsanleitung mit zwoelf Kapiteln in der eingestellten Sprache. Die
+  kleinen `?`-Buttons bleiben als Kurzhinweis pro Gruppe erhalten.
 ## Start
 
 ```powershell
@@ -62,6 +64,12 @@ braucht er ein Display, in CI laeuft er deshalb ueber `xvfb-run`.
 Die Uebersetzungen liegen pro Sprache in `translations/` (`de.py`, `en.py`, ...).
 `translations/__init__.py` buendelt sie nur noch zu `TRANSLATIONS`; Textaenderungen
 gehoeren in die jeweilige Sprachdatei.
+
+Das Handbuch liegt getrennt davon in `manual/` (`de.py`, `en.py`, `ru.py`,
+`fr.py`, `es.py`, `pl.py`, `tr.py`). Es ist absichtlich nicht Teil von
+`TRANSLATIONS`, weil die langen Kapitel sonst die Key-Paritaetstests aufblaehen.
+Alle sieben Oberflaechensprachen sind uebersetzt; nur eine unbekannte Sprache
+zeigt das deutsche Handbuch.
 
 ## Ablauf
 

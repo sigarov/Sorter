@@ -24,6 +24,7 @@ from config import (
 )
 from dedup_sorter import DedupSorter
 from help_texts import get_help
+from manual import get_manual
 from sorter import Sorter
 from translations import TRANSLATIONS
 from utils import lesbare_groesse
@@ -117,6 +118,11 @@ class App(tk.Tk):
         self._idx_state = None
         self._sort_state = None
 
+        self._manual_win = None
+        self._manual_index = 0
+        self._manual_toc = None
+        self._manual_txt = None
+
         self._text_widgets = {}
 
     def _init_window(self):
@@ -157,6 +163,17 @@ class App(tk.Tk):
         )
         self.cmb_lang.pack(side="left", padx=6)
         self.cmb_lang.bind("<<ComboboxSelected>>", self._on_lang_change)
+
+        self.btn_help = tk.Button(
+            fr_lang,
+            text="",
+            font=("", 9, "bold"),
+            relief="raised",
+            bd=1,
+            cursor="hand2",
+            command=self._open_manual,
+        )
+        self.btn_help.pack(side="right")
 
     def _build_sources_column(self, parent):
         self.q1_entry, self.btn_w1, self.filter1_entry = self._build_source_block(
@@ -441,6 +458,9 @@ class App(tk.Tk):
 
     def _apply_language(self):
         self.title(self.lang.get("window_title", WINDOW_TITLE))
+        if self._manual_win is not None:
+            # Offenes Handbuch in der neuen Sprache neu aufbauen.
+            self._open_manual()
         self._apply_language_groups()
         self._apply_language_header()
         self._apply_language_sources()
@@ -459,6 +479,7 @@ class App(tk.Tk):
         L = self.lang
         self._text_widgets["lbl_lang"].config(text=L["lang_label"])
         self.lang_display.set(L["name"])
+        self.btn_help.config(text=L.get("btn_help", "Hilfe"))
 
     def _update_source_labels(self):
         """Quell- und Zielbeschriftungen passend zum aktiven Modus setzen."""
@@ -618,8 +639,127 @@ class App(tk.Tk):
         text = get_help(self.lang_code, section)
         if not text:
             text = self.lang.get("hint_dedup_first_run", "")
-        titel = self.lang.get("lbl_group_" + section) or self.lang.get("dlg_help_title", "Hilfe")
-        messagebox.showinfo(titel, text)
+        titel_key = {
+            "general": "lbl_group_general",
+            "dedup": "lbl_group_dedup",
+            "naming": "lbl_group_naming",
+            "log": "lbl_log",
+        }.get(section, "dlg_help_title")
+        titel = self.lang.get(titel_key) or self.lang.get("dlg_help_title", "Hilfe")
+        messagebox.showinfo(titel.rstrip(": "), text)
+
+    # ---------- Handbuch (Hilfe-Button / F1) ----------
+    def _manual_geometry(self):
+        """Fenstergroesse und Position des Handbuchs, passend zum Bildschirm."""
+        breite = min(880, max(560, self.winfo_screenwidth() - 120))
+        hoehe = min(720, max(380, self.winfo_screenheight() - 160))
+        x = max(0, self.winfo_rootx() + 40)
+        y = max(0, self.winfo_rooty() + 40)
+        return f"{breite}x{hoehe}+{x}+{y}"
+
+    def _open_manual(self, section_id=None):
+        """Oeffnet das Handbuch der aktuellen Sprache (Kapitel optional)."""
+        self._close_manual()
+
+        manual = get_manual(self.lang_code)
+        sections = manual["sections"]
+        L = self.lang
+
+        index = self._manual_index
+        if section_id is not None:
+            for i, section in enumerate(sections):
+                if section["id"] == section_id:
+                    index = i
+                    break
+        if not 0 <= index < len(sections):
+            index = 0
+        self._manual_index = index
+
+        win = tk.Toplevel(self)
+        win.title(f"{manual['title']} - {L.get('window_title', WINDOW_TITLE)}")
+        win.geometry(self._manual_geometry())
+        win.minsize(560, 380)
+        self._manual_win = win
+        win.protocol("WM_DELETE_WINDOW", self._close_manual)
+        win.bind("<Escape>", lambda _e: self._close_manual())
+
+        body = tk.Frame(win, padx=8, pady=8)
+        body.pack(fill="both", expand=True)
+
+        toc_frame = tk.Frame(body)
+        toc_frame.pack(side="left", fill="y")
+        toc = tk.Listbox(toc_frame, width=30, exportselection=False, activestyle="none")
+        toc_scroll = ttk.Scrollbar(toc_frame, orient="vertical", command=toc.yview)
+        toc.config(yscrollcommand=toc_scroll.set)
+        toc.pack(side="left", fill="y")
+        toc_scroll.pack(side="left", fill="y")
+
+        text_frame = tk.Frame(body)
+        text_frame.pack(side="left", fill="both", expand=True, padx=(8, 0))
+        txt = tk.Text(
+            text_frame,
+            wrap="word",
+            padx=8,
+            pady=6,
+            font=("", 10),
+            state="disabled",
+            relief="flat",
+        )
+        text_scroll = ttk.Scrollbar(text_frame, orient="vertical", command=txt.yview)
+        txt.config(yscrollcommand=text_scroll.set)
+        txt.pack(side="left", fill="both", expand=True)
+        text_scroll.pack(side="left", fill="y")
+        txt.tag_configure("heading", font=("", 13, "bold"), spacing3=8)
+        self._manual_toc = toc
+        self._manual_txt = txt
+
+        footer = tk.Frame(win)
+        footer.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Button(footer, text=L.get("btn_close", "Schliessen"), command=self._close_manual).pack(
+            side="right"
+        )
+
+        for section in sections:
+            toc.insert("end", section["title"])
+
+        state = {"index": None}
+
+        def zeige(i):
+            if not 0 <= i < len(sections) or i == state["index"]:
+                return
+            state["index"] = i
+            self._manual_index = i
+            toc.selection_clear(0, "end")
+            toc.selection_set(i)
+            toc.see(i)
+            section = sections[i]
+            txt.config(state="normal")
+            txt.delete("1.0", "end")
+            txt.insert("1.0", section["title"] + "\n\n", "heading")
+            txt.insert("end", section["text"])
+            txt.config(state="disabled")
+            txt.see("1.0")
+
+        def on_select(_event=None):
+            auswahl = toc.curselection()
+            if auswahl:
+                zeige(int(auswahl[0]))
+
+        toc.bind("<<ListboxSelect>>", on_select)
+        zeige(index)
+        win.focus_set()
+
+    def _close_manual(self):
+        """Schliesst das Handbuch-Fenster, falls es offen ist."""
+        win = self._manual_win
+        self._manual_win = None
+        self._manual_toc = None
+        self._manual_txt = None
+        if win is not None:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
 
     # ---------- Modus / Tabs ----------
     def _on_tab_change(self, event=None):
@@ -983,6 +1123,7 @@ class App(tk.Tk):
         self.destroy()
 
     def _bind_shortcuts(self):
+        self.bind("<F1>", lambda _e: self._open_manual())
         self.bind("<F5>", lambda e: self.start())
         self.bind("<Escape>", lambda e: self.stoppen())
         self.bind("<Control-l>", lambda e: self._log_clear())
