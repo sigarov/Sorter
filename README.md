@@ -1,3 +1,4 @@
+[![CI](https://github.com/sigarov/Sorter/actions/workflows/ci.yml/badge.svg)](https://github.com/sigarov/Sorter/actions/workflows/ci.yml)
 # Medien-Sortierer
 
 Tkinter-Tool zum Sortieren und Entdoppeln von Bildern und Videos.
