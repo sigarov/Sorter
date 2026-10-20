@@ -25,6 +25,20 @@ Tkinter-Tool zum Sortieren und Entdoppeln von Bildern und Videos.
 - **Handbuch:** Button „Hilfe“ oben rechts (oder `F1`) oeffnet eine
   Bedienungsanleitung mit zwoelf Kapiteln in der eingestellten Sprache. Die
   kleinen `?`-Buttons bleiben als Kurzhinweis pro Gruppe erhalten.
+
+## Download & Starten
+
+Du hast zwei Möglichkeiten, das Programm zu nutzen:
+
+### Option 1: Fertige Programme (Empfohlen für Nutzer)
+Lade dir die neueste Version direkt unter **[Releases](https://github.com/sigarov/Sorter/releases)** herunter.
+
+* **Windows:** Lade die `.exe`-Datei herunter und starte sie mit einem Doppelklick.
+* **Linux:** Lade die `.AppImage`-Datei herunter. Mache sie ausführbar (Rechtsklick -> Eigenschaften -> "Ausführbar" oder via Terminal mit `chmod +x dateiname.AppImage`) und starte sie per Doppelklick.
+
+### Option 2: Aus dem Quellcode starten (Für Entwickler)
+Wenn du Python installiert hast, kannst du das Programm direkt starten:
+
 ## Start
 
 ```powershell
